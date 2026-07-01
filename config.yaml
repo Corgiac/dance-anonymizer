@@ -1,29 +1,24 @@
 # ============================================================
-# 舞蹈视频智能打码/特效渲染系统 - 全局配置文件
+# 舞蹈视频智能打码/特效渲染系统 - 全局配置 (SAM 2 架构)
 # ============================================================
 
-# ---- 模型参数 ----
+# ---- YOLO 首帧检测 ----
 model:
-  path: "yolov8m-seg.pt"       # YOLOv8 分割模型 (small)
-  device: "cuda"                 # 推理设备: cuda / cpu
-  conf_threshold: 0.3            # 检测置信度阈值
-  iou_threshold: 0.35            # NMS IoU 阈值
-  half: false                    # FP16 半精度推理 (需 CUDA)
-  retina_masks: true             # ★ 高精度原生分辨率mask, 杜绝低分拉伸锯齿
-  imgsz: 1024                    # ★ 推理分辨率, 确保捕获细长手臂
+  path: "yolo11s-seg.pt"         # YOLO 分割模型
+  device: "mps"                   # 推理设备: mps / cuda / cpu
+  conf_threshold: 0.3             # 检测置信度阈值
+  iou_threshold: 0.55             # NMS IoU 阈值
+  imgsz: 1280                     # 推理分辨率
 
-# ---- 追踪参数 ----
-tracker:
-  track_buffer: 60               # 遮挡缓冲帧数
-  expected_count: null           # 预期人数 (null=自动, 固定相机建议指定)
+# ---- 追踪引擎 (sam2 | cutie) ----
+tracking:
+  engine: "cutie"                   # 引擎: sam2 / cutie
+  model_path: "sam2_hiera_tiny.pt"  # 权重路径
 
 # ---- 特效参数 ----
 effects:
-  open_kernel_size: 5            # 形态学开运算核尺寸
-  body_expand_pixels: 0          # ★ 贴骨级: 0=不膨胀, 依赖 retina_masks 精度
-  dilate_kernel_size: 3          # ★ 纤细白边宽度
-  blur_sigma: 1.0                # 高斯模糊sigma (抗锯齿)
-  temporal_window: 8             # 时序平滑窗口 (8帧, EMA加权)
+  dilate_kernel_size: 3           # 白边宽度
+  temporal_window: 8              # 深度排序窗口
 
 # ---- 默认路径 ----
 paths:

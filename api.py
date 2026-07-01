@@ -1,14 +1,12 @@
 """
-舞蹈视频智能打码/特效渲染系统 — FastAPI v4 (互斥+可中断)
+舞蹈视频智能打码/特效渲染系统 — FastAPI v5 (YOLO+SAM2)
 =========================================================
 交互: 上传 → 实时调参预览 → 3s片段 / 全片渲染 (任选其一, 可取消)
 启动: uvicorn api:app --host 0.0.0.0 --port 8002
 """
-
 import os, sys, uuid, json, base64, shutil, cv2, time, threading, asyncio
 import numpy as np
 from typing import Optional, List, Dict
-from io import BytesIO
 
 from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -18,21 +16,59 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.tracker import DanceTracker, TrackerConfig, TrackResult
 from src.pipeline import DanceAnonymizerPipeline
 from src.effects import (
-    process_frame_effects, TemporalMaskCache, calculate_depth_order,
+    process_frame_effects, calculate_depth_order,
 )
-from src.utils import VideoReader, VideoWriter, get_video_info
+from src.utils import get_video_info
 
-app = FastAPI(title="舞蹈视频智能打码 API v4", version="4.0.0")
+app = FastAPI(title="舞蹈视频智能打码 API v5", version="5.0.0")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TASKS_DIR = os.path.join(BASE_DIR, "data", "tasks")
 os.makedirs(TASKS_DIR, exist_ok=True)
 
 TASKS: Dict[str, dict] = {}
+PROGRESS: Dict[str, dict] = {}
+CANCEL_EVENTS: Dict[str, threading.Event] = {}
 
 
 # ================================================================
-#  /cleanup/{task_id} — 释放服务端资源
+#  /cancel/{task_id} — 取消进行中的渲染
+# ================================================================
+
+@app.post("/cancel/{task_id}")
+async def cancel_render(task_id: str):
+    evt = CANCEL_EVENTS.pop(task_id, None)
+    if evt:
+        evt.set()
+        PROGRESS[task_id] = {"done": True, "running": False}
+        return {"ok": True, "cancelled": True}
+    return {"ok": True, "cancelled": False}
+
+
+# ================================================================
+#  /status/{task_id} — 轮询渲染进度
+# ================================================================
+
+@app.get("/status/{task_id}")
+async def get_status(task_id: str):
+    p = PROGRESS.get(task_id, {})
+    return {
+        "step": p.get("step", 0),
+        "step_name": p.get("step_name", ""),
+        "step_total": p.get("step_total", 5),
+        "frames_done": p.get("frames_done", 0),
+        "frames_total": p.get("frames_total", 0),
+        "elapsed": p.get("elapsed", 0),
+        "eta": p.get("eta", 0),
+        "fps": p.get("fps", 0),
+        "done": p.get("done", False),
+        "running": p.get("running", False),
+        "error": p.get("error", ""),
+    }
+
+
+# ================================================================
+#  /cleanup/{task_id}
 # ================================================================
 
 @app.delete("/cleanup/{task_id}")
@@ -41,6 +77,7 @@ async def cleanup(task_id: str):
     if task:
         task_dir = os.path.dirname(task["video_path"])
         shutil.rmtree(task_dir, ignore_errors=True)
+    PROGRESS.pop(task_id, None)
     return {"ok": True}
 
 
@@ -48,39 +85,33 @@ async def cleanup(task_id: str):
 #  渲染辅助
 # ================================================================
 
-def _render_one_frame(frame, track_results, target_ids, params):
-    """对单帧应用特效 (无时序缓存), 并标注人物ID。"""
+def _render_one_frame(frame, track_results, target_ids, params, labels_config=None):
+    """预览模式: 打码仅 target_ids, 标签覆盖所有人(自定义昵称或默认ID)。"""
+    all_track_results = track_results
+
     if target_ids:
-        target_set = set(target_ids)
-        track_results = [t for t in track_results if t.track_id in target_set]
-    if not track_results:
-        return frame.copy()
+        anonymize = [t for t in track_results if t.track_id in set(target_ids)]
+    else:
+        anonymize = track_results
 
-    ordered_ids, _ = calculate_depth_order(track_results, temporal_window=1)
-    tid_to_idx = {t.track_id: i for i, t in enumerate(track_results)}
-    cache = TemporalMaskCache(window_size=1, ema_decay=0.0)
+    if anonymize:
+        ordered_ids, _ = calculate_depth_order(anonymize, temporal_window=1)
+        tid_to_idx = {t.track_id: i for i, t in enumerate(anonymize)}
+        from src.effects import apply_shadow_outline_effect
+        result = apply_shadow_outline_effect(
+            frame=frame, depth_order=ordered_ids,
+            track_id_to_idx=tid_to_idx, track_results=anonymize,
+            dilate_kernel_size=params.get("thickness", 3),
+            fill_mode=params.get("fill_mode", "solid"),
+            fill_color=params.get("fill_color", "#000000"),
+            border_color=params.get("border_color", "#FFFFFF"),
+            opacity=params.get("opacity", 1.0),
+        )
+    else:
+        result = frame.copy()
 
-    from src.effects import apply_shadow_outline_effect
-    result = apply_shadow_outline_effect(
-        frame=frame, depth_order=ordered_ids,
-        track_id_to_idx=tid_to_idx, track_results=track_results,
-        temporal_cache=cache, frame_idx=0,
-        dilate_kernel_size=params.get("thickness", 3),
-        fill_mode=params.get("fill_mode", "solid"),
-        fill_color=params.get("fill_color", "#000000"),
-        border_color=params.get("border_color", "#FFFFFF"),
-        opacity=params.get("opacity", 1.0),
-        target_ids=target_ids,
-    )
-
-    # ★ 标注人物 ID
-    for tr in track_results:
-        x1, y1, x2, y2 = tr.bbox
-        label = f"ID:{tr.track_id}"
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        (tw, th), _ = cv2.getTextSize(label, font, 0.6, 2)
-        cv2.rectangle(result, (x1, y1 - th - 8), (x1 + tw + 6, y1), (0, 0, 0), -1)
-        cv2.putText(result, label, (x1 + 3, y1 - 5), font, 0.6, (255, 255, 255), 2)
+    from src.effects import draw_text_labels
+    result = draw_text_labels(result, all_track_results, labels_config, label_mode="all")
     return result
 
 
@@ -92,7 +123,7 @@ def _img_to_base64(img):
 def _parse_ids(target_ids_str, task):
     if target_ids_str.strip():
         return [int(x.strip()) for x in target_ids_str.split(",") if x.strip()]
-    return task["available_ids"]
+    return []
 
 
 # ================================================================
@@ -125,40 +156,54 @@ async def analyze(file: UploadFile = File(...)):
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
 
-        # ★ 扫描 12 帧, model.predict() 快速统计人数
-        from ultralytics import YOLO
-        scanner = YOLO("yolo11s-seg.pt")
-        best_frame, best_count, best_idx = None, 0, 0
-        sample_count = min(12, total_frames)
-        sample_positions = [int(total_frames * i / (sample_count + 1)) for i in range(1, sample_count + 1)]
-
-        for pos in sample_positions:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            preds = scanner.predict(frame, classes=[0], conf=0.3, device="cpu", verbose=False)
-            n = len(preds[0].boxes) if preds[0].boxes is not None else 0
-            if n > best_count:
-                best_count = n
-                best_frame = frame.copy()
-                best_idx = pos
-
-        if best_frame is None:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ret, frame = cap.read()
-            if ret: best_frame, best_idx = frame, 0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        ret, best_frame = cap.read()
         cap.release()
 
-        if best_frame is None:
+        if not ret or best_frame is None:
             return JSONResponse({"error": "无法读取视频帧"}, 400)
 
-        # 在最佳帧上跑完整 tracker (获取 mask + track_id)
-        tracker = DanceTracker(TrackerConfig(device="cpu", verbose=False))
-        track_results = tracker.track(best_frame)
+        tracker = DanceTracker(TrackerConfig(device="mps", verbose=False))
+        raw_results = tracker.detect_first_frame(best_frame)
+        raw_results.sort(key=lambda t: (t.bbox[0] + t.bbox[2]) / 2.0)
+
+        # SAM 2 精修首帧 mask
+        sam2_masks = {}
+        try:
+            import torch as _torch
+            _orig_load = _torch.load
+            if not _torch.cuda.is_available():
+                _torch.load = lambda *a, **kw: _orig_load(*a, **{**kw, 'map_location': 'cpu'})
+            from hydra.core.global_hydra import GlobalHydra
+            if GlobalHydra.instance().is_initialized():
+                GlobalHydra.instance().clear()
+            from sam2.build_sam import build_sam2
+            from sam2.sam2_image_predictor import SAM2ImagePredictor
+            sam2_ckpt = os.path.join(BASE_DIR, "sam2_hiera_tiny.pt")
+            sam2 = build_sam2("sam2_hiera_t.yaml", ckpt_path=sam2_ckpt, device="mps")
+            predictor = SAM2ImagePredictor(sam2)
+            predictor.set_image(best_frame)
+            for tr in raw_results:
+                x1, y1, x2, y2 = tr.bbox
+                masks, _, _ = predictor.predict(
+                    box=np.array([[x1, y1, x2, y2]]), multimask_output=False)
+                sam2_masks[tr.track_id] = masks[0].astype(np.float32)
+            del sam2, predictor
+            if _torch.backends.mps.is_available():
+                _torch.mps.empty_cache()
+            _torch.load = _orig_load
+        except Exception as e:
+            print(f"[Analyze] SAM 2 精修跳过: {e}")
+
+        track_results = []
+        for new_id, tr in enumerate(raw_results):
+            mask = sam2_masks.get(tr.track_id, tr.mask)
+            track_results.append(TrackResult(
+                track_id=new_id, bbox=tr.bbox,
+                confidence=tr.confidence, mask=mask, foot_y=tr.foot_y,
+            ))
         key_frame = best_frame
         available_ids = sorted([t.track_id for t in track_results])
-        target_fr = best_idx
 
         default_params = {"fill_mode": "solid", "fill_color": "#000000",
                            "border_color": "#FFFFFF", "opacity": 1.0, "thickness": 3}
@@ -170,7 +215,7 @@ async def analyze(file: UploadFile = File(...)):
             "track_results": track_results,
             "available_ids": available_ids,
             "total_frames": total_frames,
-            "fps": fps, "key_frame_idx": target_fr,
+            "fps": fps,
         }
 
         return {
@@ -192,6 +237,7 @@ async def analyze(file: UploadFile = File(...)):
 async def preview_frame(
     task_id: str = Form(...),
     target_ids: str = Form(""),
+    labels_config: str = Form(""),
     fill_mode: str = Form("solid"),
     fill_color: str = Form("#000000"),
     border_color: str = Form("#FFFFFF"),
@@ -202,17 +248,19 @@ async def preview_frame(
     if not task:
         return JSONResponse({"error": "task_id 无效"}, 404)
     parsed_ids = _parse_ids(target_ids, task)
+    labels_cfg = json.loads(labels_config) if labels_config.strip() else None
     try:
         params = {"fill_mode": fill_mode, "fill_color": fill_color,
                    "border_color": border_color, "opacity": opacity, "thickness": thickness}
-        rendered = _render_one_frame(task["key_frame"], task["track_results"], parsed_ids, params)
+        rendered = _render_one_frame(task["key_frame"], task["track_results"],
+                                      parsed_ids, params, labels_cfg)
         return {"image_base64": _img_to_base64(rendered)}
     except Exception as e:
         return JSONResponse({"error": str(e)}, 500)
 
 
 # ================================================================
-#  /preview_snippet (异步, 可中断)
+#  /preview_snippet (3秒片段, 异步可中断)
 # ================================================================
 
 @app.post("/preview_snippet")
@@ -220,137 +268,79 @@ async def preview_snippet(
     request: Request,
     task_id: str = Form(...),
     target_ids: str = Form(""),
+    labels_config: str = Form(""),
     fill_mode: str = Form("solid"),
     fill_color: str = Form("#000000"),
     border_color: str = Form("#FFFFFF"),
     thickness: int = Form(3),
     opacity: float = Form(1.0),
-    device: str = Form("cpu"),
+    device: str = Form("mps"),
 ):
     task = TASKS.get(task_id)
     if not task:
         return JSONResponse({"error": "task_id 无效"}, 404)
     parsed_ids = _parse_ids(target_ids, task)
+    labels_cfg = json.loads(labels_config) if labels_config.strip() else None
     video_path = task["video_path"]
     snippet_path = os.path.join(os.path.dirname(video_path), "snippet.mp4")
-    raw_path = snippet_path + ".raw.mp4"
-    fps = task["fps"]
+    snippet_frames = min(int(task["fps"] * 3), task["total_frames"])
 
     try:
-        snippet_frames = min(int(fps * 3), task["total_frames"])
-        cap = cv2.VideoCapture(video_path)
-        w, h = int(cap.get(3)), int(cap.get(4))
-        tracker = DanceTracker(TrackerConfig(device=device, verbose=False))
-        out = cv2.VideoWriter(raw_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-        temporal_cache = TemporalMaskCache(window_size=4, ema_decay=0.4)
+        # generation 计数器: 防止取消后旧线程覆盖新线程的进度
+        gen = PROGRESS.get(task_id, {}).get("generation", 0) + 1
+        PROGRESS[task_id] = {"done": False, "generation": gen}
+        def _on_progress(p):
+            if PROGRESS.get(task_id, {}).get("generation") == gen:
+                PROGRESS[task_id] = {**p, "done": False, "generation": gen}
 
-        for i in range(snippet_frames):
-            # ★ 客户端断开检测
-            if await request.is_disconnected():
-                break
+        cancel_event = threading.Event()
 
-            ret, frame = cap.read()
-            if not ret:
-                break
-            track_results = tracker.track(frame)
-            result, _, temporal_cache = process_frame_effects(
-                frame=frame, track_results=track_results,
-                temporal_cache=temporal_cache, frame_idx=i,
-                target_ids=parsed_ids,
-                fill_mode=fill_mode, fill_color=fill_color,
-                border_color=border_color, opacity=opacity,
-                dilate_kernel_size=thickness,
-            )
-            out.write(result)
-        cap.release()
-        out.release()
+        async def disconnect_watcher():
+            while not cancel_event.is_set():
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    return
+                await asyncio.sleep(0.5)
 
-        if await request.is_disconnected():
-            os.remove(raw_path)
-            return JSONResponse({"cancelled": True})
+        watcher_task = asyncio.create_task(disconnect_watcher())
 
-        # moviepy H.264 重编码
-        from moviepy.video.io.VideoFileClip import VideoFileClip
-        clip = VideoFileClip(raw_path)
-        clip.write_videofile(snippet_path, codec="libx264", audio_codec="aac", logger=None)
-        clip.close()
-        os.remove(raw_path)
-
-        return FileResponse(path=snippet_path, media_type="video/mp4",
-                            filename=f"snippet_{task_id}.mp4")
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, 500)
-
-
-# ================================================================
-#  /render (异步, 可中断)
-# ================================================================
-
-@app.post("/render")
-async def render(
-    request: Request,
-    task_id: str = Form(...),
-    target_ids: str = Form(""),
-    fill_mode: str = Form("solid"),
-    fill_color: str = Form("#000000"),
-    border_color: str = Form("#FFFFFF"),
-    thickness: int = Form(3),
-    opacity: float = Form(1.0),
-    device: str = Form("cpu"),
-):
-    task = TASKS.get(task_id)
-    if not task:
-        return JSONResponse({"error": "task_id 无效"}, 404)
-    parsed_ids = _parse_ids(target_ids, task)
-    if not parsed_ids:
-        return JSONResponse({"error": "没有选中任何人"}, 400)
-
-    output_path = os.path.join(os.path.dirname(task["video_path"]), "result.mp4")
-
-    # threading.Event 作为取消信号
-    cancel_event = threading.Event()
-
-    # 后台线程: 轮询客户端断开状态
-    async def disconnect_watcher():
-        while not cancel_event.is_set():
-            if await request.is_disconnected():
-                cancel_event.set()
-                return
-            await asyncio.sleep(0.5)
-
-    watcher_task = asyncio.create_task(disconnect_watcher())
-
-    try:
         pipeline = DanceAnonymizerPipeline(
             tracker_config=TrackerConfig(model_path="yolo11s-seg.pt",
                                           device=device, conf_threshold=0.3,
                                           verbose=False),
-            effect_config={"body_expand_pixels": 0,
-                           "dilate_kernel_size": max(1, min(thickness, 15))},
+            effect_config={"dilate_kernel_size": max(1, min(thickness, 15))},
+            engine_config={"type": "cutie", "model_path": "sam2_hiera_tiny.pt"},
         )
-        # 在单独线程中跑 pipeline (因为 pipeline 是同步的)
+
         result = {}
         def _run():
             try:
                 pipeline.process(
-                    input_path=task["video_path"], output_path=output_path,
-                    target_ids=parsed_ids, show_progress=False,
-                    cancel_event=cancel_event,
+                    input_path=video_path, output_path=snippet_path,
+                    target_ids=parsed_ids, labels_config=labels_cfg,
+                    precomputed_detections=task.get("track_results"),
+                    max_frames=snippet_frames,
+                    show_progress=False, cancel_event=cancel_event,
+                    progress_callback=_on_progress,
                     fill_mode=fill_mode, fill_color=fill_color,
                     border_color=border_color, opacity=opacity,
                 )
                 result["status"] = "done"
+                if PROGRESS.get(task_id, {}).get("generation") == gen:
+                    PROGRESS[task_id] = {"done": True, "generation": gen}
             except Exception as e:
                 result["error"] = str(e)
+                if PROGRESS.get(task_id, {}).get("generation") == gen:
+                    PROGRESS[task_id] = {"done": True, "error": str(e), "generation": gen}
 
         thread = threading.Thread(target=_run)
         thread.start()
 
-        # 等待渲染完成或断开
         while thread.is_alive():
             if await request.is_disconnected():
                 cancel_event.set()
                 thread.join(timeout=5)
+                PROGRESS[task_id] = {"done": True}
                 return JSONResponse({"cancelled": True})
             await asyncio.sleep(0.3)
 
@@ -362,17 +352,155 @@ async def render(
         if cancel_event.is_set():
             return JSONResponse({"cancelled": True})
 
-        if not os.path.exists(output_path):
+        if not os.path.exists(snippet_path):
             return JSONResponse({"error": "输出文件未生成"}, 500)
 
-        return FileResponse(path=output_path, media_type="video/mp4",
-                            filename=f"anonymized_{task_id}.mp4")
+        return FileResponse(path=snippet_path, media_type="video/mp4",
+                            filename=f"snippet_{task_id}.mp4")
 
     except Exception as e:
         cancel_event.set()
         return JSONResponse({"error": str(e)}, 500)
     finally:
-        watcher_task.cancel()
+        if 'watcher_task' in dir():
+            watcher_task.cancel()
+
+
+# ================================================================
+#  /render (全片渲染, 异步可中断)
+# ================================================================
+
+@app.post("/render")
+async def render(
+    request: Request,
+    task_id: str = Form(...),
+    target_ids: str = Form(""),
+    labels_config: str = Form(""),
+    fill_mode: str = Form("solid"),
+    fill_color: str = Form("#000000"),
+    border_color: str = Form("#FFFFFF"),
+    thickness: int = Form(3),
+    opacity: float = Form(1.0),
+    device: str = Form("mps"),
+):
+    task = TASKS.get(task_id)
+    if not task:
+        return JSONResponse({"error": "task_id 无效"}, 404)
+    parsed_ids = _parse_ids(target_ids, task)
+    labels_cfg = json.loads(labels_config) if labels_config.strip() else None
+    if not parsed_ids:
+        return JSONResponse({"error": "没有选中任何人"}, 400)
+
+    output_path = os.path.join(os.path.dirname(task["video_path"]), "result.mp4")
+
+    if PROGRESS.get(task_id, {}).get("running") and not PROGRESS[task_id].get("done"):
+        return JSONResponse({"status": "running", "task_id": task_id})
+
+    cancel_event = threading.Event()
+    CANCEL_EVENTS[task_id] = cancel_event
+    gen = PROGRESS.get(task_id, {}).get("generation", 0) + 1
+    PROGRESS[task_id] = {"done": False, "running": True, "generation": gen,
+                         "task_id": task_id, "output_path": output_path}
+
+    def _on_progress(p):
+        if PROGRESS.get(task_id, {}).get("generation") == gen:
+            PROGRESS[task_id] = {**p, "done": False, "running": True, "generation": gen,
+                                 "task_id": task_id, "output_path": output_path}
+
+    try:
+        pipeline = DanceAnonymizerPipeline(
+            tracker_config=TrackerConfig(model_path="yolo11s-seg.pt",
+                                          device=device, conf_threshold=0.3,
+                                          verbose=False),
+            effect_config={"dilate_kernel_size": max(1, min(thickness, 15))},
+            engine_config={"type": "cutie", "model_path": "sam2_hiera_tiny.pt"},
+        )
+
+        result = {}
+        def _run():
+            try:
+                pipeline.process(
+                    input_path=task["video_path"], output_path=output_path,
+                    target_ids=parsed_ids, labels_config=labels_cfg,
+                    precomputed_detections=task.get("track_results"),
+                    show_progress=False, cancel_event=cancel_event,
+                    progress_callback=_on_progress,
+                    fill_mode=fill_mode, fill_color=fill_color,
+                    border_color=border_color, opacity=opacity,
+                )
+                result["status"] = "done"
+                if PROGRESS.get(task_id, {}).get("generation") == gen:
+                    PROGRESS[task_id] = {"done": True, "running": False, "generation": gen,
+                        "task_id": task_id, "output_path": output_path}
+            except Exception as e:
+                err_msg = str(e)
+                result["error"] = err_msg
+                if PROGRESS.get(task_id, {}).get("generation") == gen:
+                    PROGRESS[task_id] = {"done": True, "running": False, "generation": gen,
+                        "task_id": task_id, "output_path": output_path,
+                        "error": err_msg}
+
+        thread = threading.Thread(target=_run)
+        thread.start()
+
+        return JSONResponse({"status": "started", "task_id": task_id})
+
+    except Exception as e:
+        cancel_event.set()
+        if PROGRESS.get(task_id, {}).get("generation") == gen:
+            PROGRESS[task_id] = {"done": True, "running": False, "generation": gen,
+                                 "task_id": task_id, "output_path": output_path}
+        return JSONResponse({"error": str(e)}, 500)
+
+
+# ================================================================
+#  /result/{task_id} — 下载已完成的视频
+# ================================================================
+
+@app.get("/result/{task_id}")
+async def get_result(task_id: str, res: str = "original"):
+    p = PROGRESS.get(task_id, {})
+    if not p.get("done"):
+        return JSONResponse({"status": "not_ready"}, 202)
+    if p.get("error"):
+        return JSONResponse({"error": p["error"]}, 500)
+    output_path = p.get("output_path", "")
+    if not output_path or not os.path.exists(output_path):
+        return JSONResponse({"error": "输出文件不存在"}, 404)
+
+    RES_MAP = {"2k": (2560, 1440), "1080p": (1920, 1080),
+               "720p": (1280, 720), "480p": (854, 480)}
+
+    def _transcode(_output_path, _res, _target_w, _target_h):
+        transcode_path = _output_path + f".{_res}.mp4"
+        if os.path.exists(transcode_path):
+            return transcode_path
+        from moviepy.video.io.VideoFileClip import VideoFileClip
+        clip = VideoFileClip(_output_path)
+        try:
+            if clip.w <= _target_w and clip.h <= _target_h:
+                return _output_path
+            ratio = min(_target_w / clip.w, _target_h / clip.h)
+            new_w, new_h = int(clip.w * ratio), int(clip.h * ratio)
+            clip = clip.resized(newsize=(new_w, new_h))
+            clip.write_videofile(transcode_path, codec="libx264",
+                                  audio_codec="aac", logger=None)
+            return transcode_path
+        finally:
+            clip.close()
+
+    if res == "original" or res not in RES_MAP:
+        final_path = output_path
+    else:
+        target_w, target_h = RES_MAP[res]
+        loop = asyncio.get_running_loop()
+        final_path = await loop.run_in_executor(
+            None, _transcode, output_path, res, target_w, target_h)
+
+    download_name = "dance_anonymized_" + task_id + ".mp4"
+    return FileResponse(
+        path=final_path, media_type="video/mp4",
+        headers={"Content-Disposition": 'attachment; filename="' + download_name + '"'})
 
 
 # ================================================================
@@ -382,114 +510,225 @@ async def render(
 INDEX_HTML = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>舞蹈视频智能打码 v4</title>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>舞蹈视频智能打码</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0b0b0f;color:#ddd;display:flex;justify-content:center;min-height:100vh;padding:20px}
-.container{max-width:780px;width:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#18181B;color:#F4F4F5;display:flex;justify-content:center;min-height:100vh;padding:20px}
+.container{max-width:820px;width:100%}
 h1{text-align:center;color:#fff;font-size:1.5em;margin-bottom:4px}
-.sub{text-align:center;color:#777;margin-bottom:24px;font-size:.9em}
-.card{background:#16161e;border-radius:12px;padding:24px;margin-bottom:16px;border:1px solid #252530}
-.card h2{font-size:1.1em;color:#e94560;margin-bottom:12px}
-input[type=file],input[type=text],input[type=number],select{width:100%;padding:10px 14px;border-radius:8px;border:1px solid #333;background:#0d0d16;color:#ddd;font-size:.9em;outline:none;margin-bottom:10px}
-input:focus,select:focus{border-color:#e94560}
-label{display:block;font-size:.85em;color:#aaa;margin:8px 0 4px}
-.hint{font-size:.78em;color:#555;margin-bottom:8px}
-.btn{display:inline-block;padding:10px 24px;border-radius:8px;border:none;font-weight:700;font-size:.95em;cursor:pointer;margin:4px;transition:.15s}
+.sub{text-align:center;color:#A1A1AA;margin-bottom:24px;font-size:.9em}
+.card{background:#27272A;border-radius:12px;padding:20px;margin-bottom:24px;border:1px solid #3F3F46}
+.card h2{font-size:1.05em;color:#A78BFA;margin-bottom:14px;font-weight:600}
+input[type=text],input[type=number],select{height:38px;border-radius:6px;background:#3F3F46;border:1px solid transparent;color:#F4F4F5;font-size:.9em;outline:none;padding:0 12px;transition:border-color .2s}
+input[type=text]:focus,input[type=number]:focus,select:focus{border-color:#6366F1}
+select{cursor:pointer}
+input[type=file]{width:100%;padding:10px 0;color:#A1A1AA;font-size:.9em;margin-bottom:10px}
+label.block{display:block;font-size:.83em;color:#A1A1AA;margin-bottom:4px}
+.btn{display:inline-flex;align-items:center;justify-content:center;height:44px;padding:0 24px;border-radius:8px;border:none;font-weight:700;font-size:.93em;cursor:pointer;transition:all .15s}
 .btn:disabled{opacity:0.45;cursor:not-allowed}
-.btn-snippet{background:#2d6a4f;color:#fff}.btn-snippet:hover:not(:disabled){background:#1b4332}
-.btn-render{background:#e94560;color:#fff}.btn-render:hover:not(:disabled){background:#c73650}
-.btn-cancel{background:#ff6b35!important;color:#fff!important;animation:pulse .8s infinite alternate}
+.btn-primary{background:#7C3AED;color:#fff}.btn-primary:hover:not(:disabled){background:#6D28D9}
+.btn-secondary{background:#3F3F46;color:#F4F4F5}.btn-secondary:hover:not(:disabled){background:#52525B}
+.btn-ghost{background:transparent;color:#A1A1AA;border:1px solid #3F3F46}.btn-ghost:hover:not(:disabled){color:#fff;border-color:#52525B}
+.btn-cancel{background:#F97316!important;color:#fff!important;animation:pulse .8s infinite alternate}
 @keyframes pulse{from{opacity:1}to{opacity:0.7}}
-.btn-outline{background:transparent;color:#e94560;border:1px solid #e94560}
-.row{display:flex;gap:12px;flex-wrap:wrap}.row>*{flex:1;min-width:120px}
-.col-half{flex:1 1 calc(50% - 8px);min-width:150px}
-.col-third{flex:1 1 calc(33% - 8px);min-width:100px}
+.preview-card{flex-shrink:0;margin-bottom:12px}
+.preview-card img{max-width:100%;border-radius:8px;border:1px solid #3F3F46;display:block}
+.id-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.id-row{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#202022;border-radius:8px;width:100%;box-sizing:border-box}
+.id-row .cb-label{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.9em;color:#D4D4D8;white-space:nowrap;min-width:70px}
+.id-row .cb-label input[type=checkbox]{width:18px;height:18px;accent-color:#A78BFA;cursor:pointer}
+.id-row .nick-input{flex:1;min-width:0;height:36px;margin:0}
+.params-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-group label.block{margin:0}
+input[type=range]{width:100%;accent-color:#A78BFA}
+.color-picker-wrapper{display:flex;align-items:center;gap:8px;background:#3F3F46;padding:4px 8px;border-radius:6px;height:38px}
+.color-picker-wrapper input[type=color]{width:30px;height:28px;border:none;background:transparent;cursor:pointer;padding:0;border-radius:4px}
+.color-picker-wrapper input[type=text]{flex:1;height:auto;background:transparent;border:none;padding:0;color:#F4F4F5;font-size:.9em}
+.color-picker-wrapper input[type=text]:focus{border:none}
+.action-bar{display:flex;gap:16px;justify-content:flex-end;margin-top:24px;border-top:1px solid #3F3F46;padding-top:20px}
 #step1,#step2,#step3{display:none}
-#step1.active,#step2.active,#step3.active{display:block}
-.preview-img{max-width:100%;border-radius:8px;border:1px solid #333}
-.checkbox-group{display:flex;flex-wrap:wrap;gap:8px}
-.checkbox-group label{display:flex;align-items:center;gap:6px;background:#0d0d16;border:1px solid #333;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:.9em;color:#ddd;margin:0;transition:.15s}
-.checkbox-group input[type=checkbox]{width:16px;height:16px;accent-color:#e94560}
-.color-row{display:flex;align-items:center;gap:8px}
-input[type=color]{width:40px;height:36px;border:none;background:transparent;cursor:pointer;padding:0}
-.color-hex{flex:1}
-input[type=range]{width:100%;accent-color:#e94560}
+#step1.active,#step3.active{display:block}
+#step2.active{display:flex;flex-direction:column;height:calc(100vh - 110px);overflow:hidden}
+.scrollable-controls{flex:1;overflow-y:auto;padding-right:4px;padding-bottom:20px}
+.scrollable-controls::-webkit-scrollbar{width:6px}
+.scrollable-controls::-webkit-scrollbar-thumb{background:#52525B;border-radius:4px}
 video{max-width:100%;border-radius:8px;margin-top:8px}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #fff6;border-top-color:#fff;border-radius:50%;animation:spin .5s linear infinite;margin-right:6px;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
 #snippetStatus,#renderStatus{margin-top:10px;font-size:.85em}
-.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+#progressCard{display:none;margin-top:16px;padding:16px;background:#202022;border-radius:8px;border:1px solid #3F3F46}
+#progressCard.active{display:block}
+.progress-bar-bg{width:100%;height:10px;background:#3F3F46;border-radius:5px;overflow:hidden;margin:10px 0}
+.progress-bar-fill{height:100%;background:linear-gradient(90deg,#A78BFA,#6366F1);border-radius:5px;transition:width .3s;width:0%}
+.progress-info{display:flex;justify-content:space-between;color:#A1A1AA;font-size:.82em}
+.progress-info span{color:#A78BFA;font-weight:700}
+@media (max-width:768px){
+  body{padding:8px}
+  .container{max-width:100%}
+  .card{padding:10px;margin-bottom:12px}
+  h1{font-size:1.2em;margin-bottom:2px}
+  .sub{font-size:.78em;margin-bottom:10px}
+  img,video{max-width:100%;height:auto}
+  .id-list{display:flex;flex-direction:column;gap:6px}
+  .id-row{display:flex;flex-direction:row!important;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;width:100%;flex-wrap:nowrap!important}
+  .id-row .cb-label{min-width:auto;font-size:.85em}
+  .id-row .nick-input{flex:1;min-width:0;max-width:none;height:34px;margin:0;font-size:13px}
+  .params-grid{display:flex!important;flex-direction:column;gap:6px}
+  .form-group{display:flex;flex-direction:row!important;align-items:center;justify-content:space-between;background:#202022;padding:8px 10px;border-radius:8px;gap:10px}
+  .form-group label.block{font-size:.82em;color:#A1A1AA;white-space:nowrap;min-width:60px;margin:0}
+  .form-group select,.form-group input[type=number]{width:auto;min-width:80px;height:34px;font-size:13px;margin:0}
+  .color-picker-wrapper{height:34px;padding:2px 6px;gap:4px}
+  .color-picker-wrapper input[type=color]{width:24px;height:24px}
+  .color-picker-wrapper input[type=text]{font-size:13px}
+  .btn{height:40px;padding:0 14px;font-size:.85em}
+  .action-bar{flex-direction:column;gap:8px;margin-top:16px;padding-top:14px}
+  .action-bar .btn{width:100%}
+  input[type=text],input[type=number],select{height:34px;font-size:13px}
+  .form-group:has(input[type=range]){flex-direction:column!important;align-items:stretch}
+  .form-group:has(input[type=range]) label.block{min-width:auto}
+}
 </style>
 </head>
 <body>
 <div class="container">
 <h1>舞蹈视频智能打码</h1>
-<p class="sub">上传 → 实时调参 → 3秒预览 / 全片渲染 (互斥 · 可取消)</p>
+<p class="sub">上传视频 · 选择对象 · 一键渲染</p>
 
 <div id="step1" class="card active">
   <h2>Step 1 — 上传视频</h2>
   <input type="file" id="fileInput" accept="video/*">
-  <button class="btn btn-render" id="uploadBtn">上传并分析</button>
+  <button class="btn btn-primary" id="uploadBtn">上传并分析</button>
   <div id="uploadStatus"></div>
 </div>
 
-<div id="step2" class="card">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-    <h2 style="margin:0">Step 2 — 实时调参预览</h2>
-    <button class="btn btn-outline btn-sm" id="reuploadBtn" style="margin:0">↻ 重新上传</button>
-  </div>
-  <img id="previewImg" class="preview-img" alt="预览">
-
-  <label>打码对象</label>
-  <div id="idCheckboxes" class="checkbox-group"></div>
-
-  <label>调参 <span style="color:#e94560;font-size:.8em">(修改即刷新)</span></label>
-  <div class="row">
-    <div class="col-third">
-      <label>模式</label><select id="fillMode"><option value="solid">纯色</option><option value="gradient">渐变</option><option value="blur">模糊</option></select>
+<div id="step2">
+  <div class="card preview-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h2 style="margin:0">预览</h2>
+      <button class="btn btn-ghost" id="reuploadBtn" style="height:34px;padding:0 14px;font-size:.8em">↻ 重新上传</button>
     </div>
-    <div class="col-third">
-      <label>透明度 <span id="opacityVal">100%</span></label><input type="range" id="opacity" min="0" max="100" value="100">
-    </div>
-    <div class="col-third">
-      <label>白边</label><input type="number" id="thickness" value="3" min="1" max="15">
-    </div>
-  </div>
-  <div class="row">
-    <div class="col-half">
-      <label>填充色</label><div class="color-row"><input type="color" id="fillColor" value="#000000"><input type="text" id="fillColorHex" class="color-hex" value="#000000"></div>
-    </div>
-    <div class="col-half">
-      <label>边框色</label><div class="color-row"><input type="color" id="borderColor" value="#FFFFFF"><input type="text" id="borderColorHex" class="color-hex" value="#FFFFFF"></div>
-    </div>
+    <img id="previewImg" alt="预览">
   </div>
 
-  <div class="btn-row">
-    <button class="btn btn-snippet" id="snippetBtn">生成3秒预览</button>
-    <button class="btn btn-render" id="renderBtn">生成完整视频</button>
+  <div class="scrollable-controls">
+  <div class="card">
+    <h2>打码对象</h2>
+    <div id="idCheckboxes" class="id-list"></div>
   </div>
-  <div id="snippetStatus"></div><div id="renderStatus"></div>
+
+  <div class="card">
+    <h2>打码设置</h2>
+    <div class="params-grid">
+      <div class="form-group">
+        <label class="block">填充模式</label>
+        <select id="fillMode"><option value="solid">纯色</option><option value="gradient">渐变</option><option value="blur">模糊</option></select>
+      </div>
+      <div class="form-group">
+        <label class="block">白边宽度</label>
+        <input type="number" id="thickness" value="3" min="1" max="15">
+      </div>
+      <div class="form-group">
+        <label class="block">填充色</label>
+        <div class="color-picker-wrapper"><input type="color" id="fillColor" value="#000000"><input type="text" id="fillColorHex" value="#000000"></div>
+      </div>
+      <div class="form-group">
+        <label class="block">边框色</label>
+        <div class="color-picker-wrapper"><input type="color" id="borderColor" value="#FFFFFF"><input type="text" id="borderColorHex" value="#FFFFFF"></div>
+      </div>
+      <div class="form-group">
+        <label class="block">透明度 <span id="opacityVal">100%</span></label>
+        <input type="range" id="opacity" min="0" max="100" value="100">
+      </div>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn btn-secondary" id="snippetBtn">生成 3 秒预览</button>
+      <button class="btn btn-primary" id="renderBtn">生成完整视频</button>
+    </div>
+    <div id="snippetStatus"></div><div id="renderStatus"></div>
+    </div>
+    <div id="progressCard">
+      <div id="progressStep" style="color:#A78BFA;font-size:.9em;font-weight:700"></div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+      <div class="progress-info">
+        <span id="progressPct">0%</span>
+        <span id="progressFps"></span>
+        <span id="progressEta"></span>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="step3" class="card">
-  <h2>Step 3 — 渲染完成</h2>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <h2 style="margin:0">处理完成</h2>
+    <button class="btn btn-ghost" onclick="location.reload()" style="height:34px;padding:0 14px;font-size:.85em">↻ 处理新视频</button>
+  </div>
   <div id="resultArea"></div>
-  <button class="btn btn-outline" onclick="location.reload()">处理新视频</button>
+</div>
+<div class="modal-overlay" id="qualityModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);justify-content:center;align-items:center">
+  <div class="modal-card" style="background:#27272A;border-radius:12px;padding:24px;border:1px solid #3F3F46;min-width:300px;text-align:center">
+    <h3 style="color:#F4F4F5;margin-bottom:16px">选择下载画质</h3>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#3F3F46;border-radius:8px;cursor:pointer;color:#F4F4F5">
+        <input type="radio" name="quality" value="2k" checked style="accent-color:#7C3AED;width:16px;height:16px"> 2K
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#3F3F46;border-radius:8px;cursor:pointer;color:#F4F4F5">
+        <input type="radio" name="quality" value="1080p" style="accent-color:#7C3AED;width:16px;height:16px"> 1080P
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#3F3F46;border-radius:8px;cursor:pointer;color:#F4F4F5">
+        <input type="radio" name="quality" value="720p" style="accent-color:#7C3AED;width:16px;height:16px"> 720P
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#3F3F46;border-radius:8px;cursor:pointer;color:#F4F4F5">
+        <input type="radio" name="quality" value="480p" style="accent-color:#7C3AED;width:16px;height:16px"> 480P
+      </label>
+    </div>
+    <div style="display:flex;gap:10px">
+      <button id="modalCancel" style="flex:1;padding:10px;background:transparent;border:1px solid #3F3F46;border-radius:8px;color:#A1A1AA;cursor:pointer;font-size:.9em">取消</button>
+      <button id="modalConfirm" style="flex:1;padding:10px;background:#7C3AED;border:none;border-radius:8px;color:#fff;cursor:pointer;font-size:.9em;font-weight:700">确认下载</button>
+    </div>
+  </div>
 </div>
 </div>
 
 <script>
 let taskId = null, debounceTimer = null;
-let snippetCtrl = null, renderCtrl = null;  // AbortController
+let snippetCtrl = null, renderCtrl = null;
+let progressTimer = null;
+let resultTaskId = null;
+let snippetGenerated = false;
+
+function showQualityModal(tid){
+  resultTaskId=tid;
+  var m=$('qualityModal'); if(m)m.style.display='flex';
+}
+function hideQualityModal(){
+  var m=$('qualityModal'); if(m)m.style.display='none';
+}
+document.addEventListener('DOMContentLoaded', function(){
+  var mc=$('modalCancel'), mf=$('modalConfirm'), mq=$('qualityModal');
+  if(mc) mc.addEventListener('click', hideQualityModal);
+  if(mq) mq.addEventListener('click', function(e){ if(e.target===this) hideQualityModal(); });
+  if(mf) mf.addEventListener('click', function(){
+    var sel=document.querySelector('input[name=quality]:checked');
+    var res=sel?sel.value:'original';
+    hideQualityModal();
+    var a=document.createElement('a');
+    a.href='/result/'+resultTaskId+(res!=='original'?'?res='+res:'');
+    a.download='';
+    a.style.display='none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ document.body.removeChild(a); }, 100);
+  });
+});
 
 const $=id=>document.getElementById(id);
 const BTN_SNIPPET='snippetBtn', BTN_RENDER='renderBtn';
 
-// ======== resetToStep1 — 严格三层复位 ========
 function resetToStep1(){
-  // 1. 网络层: 中断正在进行的请求 + 服务端清理
   if(snippetCtrl){ snippetCtrl.abort(); snippetCtrl=null; }
   if(renderCtrl){ renderCtrl.abort(); renderCtrl=null; }
   if(taskId){
@@ -497,8 +736,6 @@ function resetToStep1(){
     fetch('/cleanup/'+tid, {method:'DELETE'}).catch(()=>{});
     taskId = null;
   }
-
-  // 2. 数据层: 清空标识、文件input、参数归零
   $('fileInput').value = '';
   clearTimeout(debounceTimer); debounceTimer = null;
   $('opacity').value = 100; $('opacityVal').textContent = '100%';
@@ -506,39 +743,44 @@ function resetToStep1(){
   $('fillColor').value = '#000000'; $('fillColorHex').value = '#000000';
   $('borderColor').value = '#FFFFFF'; $('borderColorHex').value = '#FFFFFF';
   $('thickness').value = 3;
-
-  // 3. UI层: 切换面板 + 复位上传按钮 + 清理动态DOM
   $('step2').classList.remove('active');
   $('step3').classList.remove('active');
   $('step1').classList.add('active');
-
   const uploadBtn = $('uploadBtn');
   uploadBtn.disabled = false;
   uploadBtn.textContent = '上传并分析';
   uploadBtn.classList.remove('btn-cancel');
   $('uploadStatus').innerHTML = '';
-
   $('previewImg').src = '';
   $('idCheckboxes').innerHTML = '';
   $('snippetStatus').innerHTML = '';
   $('renderStatus').innerHTML = '';
   $('resultArea').innerHTML = '';
-
-  // 按钮互斥复位
+  renderRunning = false;
+  snippetGenerated = false;
+  stopProgress();
   unlockButtons();
   const sb=$('snippetBtn'), rb=$('renderBtn');
   sb.classList.remove('btn-cancel'); sb.disabled=false;
-  sb.innerHTML='生成3秒预览';
+  sb.innerHTML='生成 3 秒预览';
   rb.classList.remove('btn-cancel'); rb.disabled=false;
   rb.innerHTML='生成完整视频';
 }
 
-// ======== 按钮绑定 ========
 $('reuploadBtn').addEventListener('click', resetToStep1);
 
+function buildLabelsConfig(){
+  var cfg={};
+  document.querySelectorAll('#idCheckboxes .nick-input').forEach(inp=>{
+    var text=inp.value.trim(); if(!text)return;
+    var tid=inp.closest('div').querySelector('.anon-cb').value;
+    cfg[tid]={text:text};
+  });
+  return Object.keys(cfg).length>0?JSON.stringify(cfg):'';
+}
 function getParams(){
-  const checks=document.querySelectorAll('#idCheckboxes input[type=checkbox]:checked');
-  return {target_ids:Array.from(checks).map(c=>c.value).join(','),fill_mode:$('fillMode').value,fill_color:$('fillColor').value,border_color:$('borderColor').value,thickness:$('thickness').value,opacity:$('opacity').value/100};
+  var checks=document.querySelectorAll('#idCheckboxes .anon-cb:checked');
+  return {target_ids:Array.from(checks).map(c=>c.value).join(','),labels_config:buildLabelsConfig(),fill_mode:$('fillMode').value,fill_color:$('fillColor').value,border_color:$('borderColor').value,thickness:$('thickness').value,opacity:$('opacity').value/100};
 }
 
 async function updatePreview(){
@@ -547,9 +789,15 @@ async function updatePreview(){
   for(const[k,v]of Object.entries(p))fd.append(k,String(v));
   try{const r=await fetch('/preview_frame',{method:'POST',body:fd});const d=await r.json();if(d.image_base64)$('previewImg').src=d.image_base64;}catch(e){}
 }
-function debounceUpdate(){clearTimeout(debounceTimer);debounceTimer=setTimeout(updatePreview,300);}
+function debounceUpdate(){
+  clearTimeout(debounceTimer);
+  debounceTimer=setTimeout(updatePreview,300);
+  if(snippetGenerated){
+    $('snippetBtn').disabled = false;
+    $('snippetBtn').innerHTML = '重新生成预览视频';
+  }
+}
 
-// ======== 互斥按钮 + AbortController ========
 function lockButtons(activeBtnId){
   const other = activeBtnId===BTN_SNIPPET ? BTN_RENDER : BTN_SNIPPET;
   $(other).disabled = true;
@@ -564,36 +812,71 @@ function setCancelling(btn){
 }
 function resetButton(btn, originalText, originalClass){
   btn.classList.remove('btn-cancel');
-  btn.className = btn.className.replace(/btn-cancel/g,'');
   btn.className = originalClass;
   btn.innerHTML = originalText;
+}
+
+function formatTime(s){
+  if(!s||s<=0||s===Infinity)return '--';
+  var m=Math.floor(s/60),sec=Math.floor(s%60);
+  return m>0?m+'分'+sec+'秒':sec+'秒';
+}
+function startProgress(onDone){
+  $('progressCard').classList.add('active');
+  $('progressFill').style.width='0%'; $('progressPct').textContent='0%';
+  $('progressFps').textContent=''; $('progressEta').textContent='';
+  $('progressStep').textContent='准备中...';
+  function poll(){
+    if(!taskId)return;
+    fetch('/status/'+taskId).then(r=>r.json()).then(p=>{
+      if(p.done){
+        stopProgress();
+        if(onDone) onDone(p);
+        return;
+      }
+      if(p.running || p.step>0){
+        var names={1:'准备视频',2:'分析人物',3:'智能处理',4:'生成视频'};$('progressStep').textContent=(names[p.step]||'处理中')+' · '+p.step+'/'+p.step_total;
+        if(p.frames_total>0){
+          var pct=Math.round(p.frames_done/p.frames_total*100);
+          $('progressFill').style.width=pct+'%';
+          $('progressPct').textContent=pct+'% ('+p.frames_done+'/'+p.frames_total+'帧)';
+          if(p.fps>0)$('progressFps').textContent=p.fps.toFixed(1)+' 帧/秒';
+          $('progressEta').textContent='⏱ '+formatTime(p.eta);
+        }else{$('progressFill').style.width='30%';$('progressPct').textContent='...';}
+      }
+      progressTimer=setTimeout(poll,800);
+    }).catch(()=>{progressTimer=setTimeout(poll,1500);});
+  }
+  // 延迟首次 poll，等服务端更新 PROGRESS 后再开始轮询
+  progressTimer=setTimeout(poll,300);
+}
+function stopProgress(){
+  clearTimeout(progressTimer);progressTimer=null;
+  $('progressCard').classList.remove('active');
 }
 
 function makeFetch(endpoint, btnId, statusId, onSuccess){
   const btn = $(btnId);
   const origText = btn.innerHTML;
   const origClass = btn.className;
-
-  // 如果正在请求中 → 取消
   if (btnId===BTN_SNIPPET && snippetCtrl || btnId===BTN_RENDER && renderCtrl){
+    if(!confirm('确定要取消当前任务吗？')) return;
     const ctrl = btnId===BTN_SNIPPET ? snippetCtrl : renderCtrl;
     ctrl.abort();
+    stopProgress();
+    fetch('/cancel/'+taskId, {method:'POST'}).catch(()=>{});
     return;
   }
-
-  // 新建 AbortController
   const ctrl = new AbortController();
-  if(btnId===BTN_SNIPPET) snippetCtrl=ctrl; else renderCtrl=ctrl;
-
-  // UI: 锁定另一按钮, 当前按钮变取消态
+  if(btnId===BTN_SNIPPET){ snippetCtrl=ctrl; snippetGenerated=false; }
+  else renderCtrl=ctrl;
   lockButtons(btnId);
   setCancelling(btn);
   $(statusId).innerHTML = '';
-
+  startProgress();
   const p = getParams();
   const fd = new FormData(); fd.append('task_id', taskId);
   for(const[k,v] of Object.entries(p)) fd.append(k, String(v));
-
   fetch(endpoint, {method:'POST', body:fd, signal:ctrl.signal})
   .then(async r => {
     if(!r.ok){const e=await r.json();$(statusId).innerHTML=`<span style="color:#e94560">${e.error||e.detail}</span>`;return;}
@@ -601,10 +884,10 @@ function makeFetch(endpoint, btnId, statusId, onSuccess){
   })
   .catch(err => {
     if(err.name==='AbortError'){
-      $(statusId).innerHTML = '<span style="color:#ff6b35">已取消</span>';
     } else {
       $(statusId).innerHTML = `<span style="color:#e94560">错误: ${err.message}</span>`;
     }
+    stopProgress();
   })
   .finally(() => {
     if(btnId===BTN_SNIPPET) snippetCtrl=null; else renderCtrl=null;
@@ -613,30 +896,73 @@ function makeFetch(endpoint, btnId, statusId, onSuccess){
   });
 }
 
-// ======== 按钮绑定 ========
 $('snippetBtn').addEventListener('click', ()=>{
   makeFetch('/preview_snippet', BTN_SNIPPET, 'snippetStatus', async r => {
+    stopProgress();
     const blob = await r.blob();
     const snippetUrl = URL.createObjectURL(blob);
     $('snippetStatus').innerHTML = `<video controls autoplay loop muted src="${snippetUrl}"></video>
       <br><a class="btn btn-snippet" href="${snippetUrl}" download="preview_${taskId}.mp4" style="display:inline-block;margin-top:8px;text-decoration:none;padding:6px 14px;font-size:.85em">下载预览片段</a>`;
+    snippetGenerated = true;
+    $('snippetBtn').innerHTML = '生成 3 秒预览';
   });
 });
 
+let renderRunning=false;
 $('renderBtn').addEventListener('click', ()=>{
-  makeFetch('/render', BTN_RENDER, 'renderStatus', async r => {
-    const blob = await r.blob();
-    const videoUrl = URL.createObjectURL(blob);
-    $('resultArea').innerHTML = `<video controls src="${videoUrl}" style="max-width:100%;border-radius:8px"></video>
-      <br><a class="btn btn-render" href="${videoUrl}" download="anonymized_${taskId}.mp4" style="display:inline-block;margin-top:12px;text-decoration:none">
-        下载视频
-      </a>`;
-    $('step2').classList.remove('active');
-    $('step3').classList.add('active');
+  if(renderRunning){
+    if(!confirm('确定要取消当前任务吗？')) return;
+    renderRunning=false;
+    stopProgress();
+    $('renderStatus').innerHTML='';
+    unlockButtons();
+    resetButton($('renderBtn'), '生成完整视频', 'btn btn-primary');
+    fetch('/cancel/'+taskId, {method:'POST'}).catch(()=>{});
+    return;
+  }
+  renderRunning=true;
+  lockButtons(BTN_RENDER);
+  setCancelling($('renderBtn'));
+  $('renderStatus').innerHTML='';
+  const p=getParams(), fd=new FormData(); fd.append('task_id', taskId);
+  for(var k in p) fd.append(k, String(p[k]));
+  fetch('/render', {method:'POST', body:fd})
+  .then(async r=>{
+    const d=await r.json();
+    if(d.status==='started'){
+      $('renderStatus').innerHTML='<span style="color:#A78BFA">处理中, 可切换应用, 完成后点击下载</span>';
+      startProgress(function(p){
+        renderRunning=false;
+        unlockButtons();
+        resetButton($('renderBtn'), '生成完整视频', 'btn btn-primary');
+        if(p && p.error){
+          $('renderStatus').innerHTML='<span style="color:#e94560">处理失败: '+p.error+'</span>';
+          return;
+        }
+        var vUrl='/result/'+taskId;
+        $('resultArea').innerHTML=
+          '<video controls src="'+vUrl+'" style="max-width:100%;border-radius:8px;margin-bottom:12px"></video>'+
+          '<button class="btn btn-primary" id="downloadBtn">下载视频</button>';
+        $('downloadBtn').addEventListener('click', function(){ showQualityModal(taskId); });
+        $('step2').classList.remove('active');
+        $('step3').classList.add('active');
+        $('renderStatus').innerHTML='';
+      });
+    }else{
+      renderRunning=false;
+      unlockButtons();
+      resetButton($('renderBtn'), '生成完整视频', 'btn btn-primary');
+    }
+  })
+  .catch(err=>{
+    stopProgress();
+    renderRunning=false;
+    unlockButtons();
+    resetButton($('renderBtn'), '生成完整视频', 'btn btn-primary');
+    if(err.name!=='AbortError') $('renderStatus').innerHTML='<span style="color:#e94560">错误: '+err.message+'</span>';
   });
 });
 
-// ======== 上传 ========
 $('uploadBtn').addEventListener('click', async ()=>{
   const file=$('fileInput').files[0];if(!file)return alert('请选择视频');
   const btn=$('uploadBtn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>分析中...';
@@ -646,13 +972,12 @@ $('uploadBtn').addEventListener('click', async ()=>{
     if(d.error){$('uploadStatus').innerHTML=`<span style="color:#e94560">${d.error}</span>`;return;}
     taskId=d.task_id;$('previewImg').src=d.image_base64;
     const g=$('idCheckboxes');g.innerHTML='';
-    d.available_ids.forEach(id=>{g.innerHTML+=`<label><input type="checkbox" value="${id}" checked onchange="debounceUpdate()"> ID: ${id}</label>`;});
+    d.available_ids.forEach(id=>{g.innerHTML+=`<div class="id-row"><label class="cb-label"><input type="checkbox" class="anon-cb" value="${id}" checked onchange="debounceUpdate()"> 人物${parseInt(id)+1}</label><input type="text" class="nick-input" placeholder="输入昵称..." maxlength="6" oninput="debounceUpdate()"></div>`;});
     $('step1').classList.remove('active');$('step2').classList.add('active');
   }catch(e){$('uploadStatus').textContent='错误: '+e.message;}
   finally{btn.disabled=false;btn.textContent='上传并分析';}
 });
 
-// ======== 参数绑定 ========
 $('opacity').addEventListener('input',()=>{$('opacityVal').textContent=$('opacity').value+'%';debounceUpdate();});
 $('fillColor').addEventListener('input',()=>{$('fillColorHex').value=$('fillColor').value;debounceUpdate();});
 $('borderColor').addEventListener('input',()=>{$('borderColorHex').value=$('borderColor').value;debounceUpdate();});

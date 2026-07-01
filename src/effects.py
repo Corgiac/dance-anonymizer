@@ -1,68 +1,50 @@
 """
-Phase 3: 特效 & 深度排序模块 — Soft Alpha Pipeline
+Phase 3: 特效 & 深度排序模块 — SAM 2 直出 mask 版本
+=====================================================
+- SAM 2 输出的 mask 边缘精准平滑, 无需 EMA 时序缓存
+- 保留: 白边提取、深度排序、填充渲染
+- 新增: Pillow 文字标签渲染 (正上方居中, 支持中文)
+- 删除: TemporalMaskCache 及其所有相关逻辑
 """
-
-import cv2
+import os, cv2
 import numpy as np
-from typing import List, Optional, Tuple, Dict
-from collections import deque
+from typing import List, Optional, Tuple
+from PIL import Image, ImageDraw, ImageFont
 
 
 # ================================================================
-# Alpha Edge
+# Alpha Edge (白边提取)
 # ================================================================
 
-def _extract_edge_alpha(alpha: np.ndarray, edge_width: int = 3) -> np.ndarray:
-    """
-    从硬掩码提取白边: dilate - original, 无 findContours, 无 GaussianBlur。
-    假定输入已是二值或可二值化的 mask。
-    """
-    hard = (alpha > 0.3).astype(np.uint8)
+def extract_edge_alpha(alpha: np.ndarray, edge_width: int = 3) -> np.ndarray:
+    """提取锐利白边: dilate → 差分（调用方保证 alpha 已二值化）"""
+    hard = alpha.astype(np.uint8)
     if hard.max() == 0:
         return np.zeros_like(alpha, dtype=np.float32)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (edge_width, edge_width))
+    ksize = max(3, edge_width) | 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
     dilated = cv2.dilate(hard, kernel)
-    edge = (dilated - hard).astype(np.float32)
-    return edge
+    edge = (dilated - hard).astype(np.float32)  # 0 或 1, 锐利无模糊
+    return np.clip(edge, 0.0, 1.0)
+
+
+def blend_body(alpha: np.ndarray, dilate_size: int = 0) -> np.ndarray:
+    """膨胀主体遮罩，确保遮盖快速运动的肢体残影（调用方保证 alpha 已二值化）"""
+    body = alpha.astype(np.float32)
+    if dilate_size > 0:
+        ksize = max(3, dilate_size) | 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+        body = cv2.dilate(body, kernel, iterations=1).astype(np.float32)
+    return body
+
+
+def blend_edge(alpha: np.ndarray, edge_width: int = 3) -> np.ndarray:
+    """从二值化 mask 提取白边（调用方保证 alpha 已二值化）"""
+    return extract_edge_alpha(alpha, edge_width)
 
 
 # ================================================================
-# EMA 时序缓存
-# ================================================================
-
-class TemporalMaskCache:
-    def __init__(self, window_size=5, ema_decay=0.3):
-        self.ema_decay = ema_decay
-        self._cache: Dict[int, np.ndarray] = {}
-
-    def update(self, track_id: int, alpha: np.ndarray, frame_idx: int):
-        self._cache[track_id] = alpha.copy()
-
-    def get_blended_body(self, track_id: int) -> Optional[np.ndarray]:
-        alpha = self._cache.get(track_id)
-        if alpha is None:
-            return None
-        return np.clip(cv2.GaussianBlur(alpha, (3, 3), sigmaX=0.8), 0.0, 1.0)
-
-    def get_blended_edge(self, track_id: int, edge_width: int = 3) -> Optional[np.ndarray]:
-        alpha = self._cache.get(track_id)
-        if alpha is None:
-            return None
-        smoothed = cv2.GaussianBlur(alpha, (5, 5), sigmaX=1.0)
-        return _extract_edge_alpha(smoothed, edge_width)
-
-    def cleanup_stale(self, active_ids: set):
-        for tid in list(self._cache.keys()):
-            if tid not in active_ids:
-                del self._cache[tid]
-
-    def reset(self):
-        self._cache.clear()
-
-
-# ================================================================
-# 深度排序 — 首帧冻结
+# 深度排序 — 纯实时动态
 # ================================================================
 
 def calculate_depth_order(
@@ -70,88 +52,21 @@ def calculate_depth_order(
     temporal_window: int = 5,
     smooth_history: Optional[dict] = None,
 ) -> Tuple[List[int], dict]:
-    BUFFER_FRAMES = 15
-
-    frozen_order = getattr(calculate_depth_order, "_frozen_order", None)
-    frozen_foot_y = getattr(calculate_depth_order, "_frozen_foot_y", None)
-    foot_y_buffer = getattr(calculate_depth_order, "_foot_y_buffer", None)
-    buffer_count = getattr(calculate_depth_order, "_buffer_count", 0)
-
-    current_ids = [t.track_id for t in track_results]
-    current_foot_y = {t.track_id: t.foot_y for t in track_results}
-
-    # ================================================================
-    # 初始化缓冲: 前 15 帧动态排序 + 收集 foot_y, 满后取中位数永久冻结
-    # ================================================================
-    if frozen_order is None:
-        if foot_y_buffer is None:
-            foot_y_buffer = {}
-
-        for t in track_results:
-            tid = t.track_id
-            if tid not in foot_y_buffer:
-                foot_y_buffer[tid] = []
-            foot_y_buffer[tid].append(t.foot_y)
-
-        buffer_count += 1
-        calculate_depth_order._foot_y_buffer = foot_y_buffer
-        calculate_depth_order._buffer_count = buffer_count
-
-        if buffer_count < BUFFER_FRAMES:
-            # 缓冲期内: 按当前帧 foot_y 动态排序
-            sorted_tracks = sorted(track_results, key=lambda t: t.foot_y)
-            return [t.track_id for t in sorted_tracks], (smooth_history or {})
-
-        # 缓冲期满: 取每个 track_id 的中位数 foot_y 永久冻结
-        median_foot_y = {}
-        for tid, fys in foot_y_buffer.items():
-            median_foot_y[tid] = float(np.median(fys))
-
-        sorted_ids = sorted(median_foot_y.keys(), key=lambda tid: median_foot_y[tid])
-        frozen_order = sorted_ids
-        calculate_depth_order._frozen_order = frozen_order
-        calculate_depth_order._frozen_foot_y = median_foot_y
-        # 释放缓冲内存
-        calculate_depth_order._foot_y_buffer = None
-        calculate_depth_order._buffer_count = 0
-
-    # ================================================================
-    # 冻结后: 用冻结顺序, 新 ID 按 foot_y 插入正确位置而非末尾
-    # ================================================================
-    ordered = [tid for tid in frozen_order if tid in current_ids]
-
-    for tid in current_ids:
-        if tid not in ordered:
-            new_fy = current_foot_y[tid]
-            insert_pos = len(ordered)
-            for i, existing_tid in enumerate(ordered):
-                existing_fy = frozen_foot_y.get(existing_tid) if frozen_foot_y else None
-                if existing_fy is not None and new_fy < existing_fy:
-                    insert_pos = i
-                    break
-            ordered.insert(insert_pos, tid)
-            # 同步写入 frozen_order, 后续帧该 ID 不再是"新"
-            frozen_order.insert(insert_pos, tid)
-            if frozen_foot_y is not None:
-                frozen_foot_y[tid] = new_fy
-            calculate_depth_order._frozen_order = frozen_order
-            calculate_depth_order._frozen_foot_y = frozen_foot_y
-
-    return ordered, (smooth_history or {})
+    sorted_tracks = sorted(track_results, key=lambda t: t.foot_y)
+    return [t.track_id for t in sorted_tracks], (smooth_history or {})
 
 
 # ================================================================
-# 辅助
+# 辅助渲染函数
 # ================================================================
 
-def _hex_to_bgr(hex_color: str) -> Tuple[float, float, float]:
+def _hex_to_bgr(hex_color: str):
     hex_color = hex_color.lstrip("#")
     r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
     return (b, g, r)
 
 
-def _render_gradient_fill(h: int, w: int, alpha: np.ndarray,
-                           color_top: tuple, color_bot: tuple) -> np.ndarray:
+def _render_gradient_fill(h, w, alpha, color_top, color_bot):
     gradient = np.zeros((h, w, 3), dtype=np.float32)
     for row in range(h):
         t = row / max(h - 1, 1)
@@ -163,12 +78,10 @@ def _render_gradient_fill(h: int, w: int, alpha: np.ndarray,
     return (gradient * a).astype(np.uint8)
 
 
-def _render_blur_fill(frame: np.ndarray, alpha: np.ndarray,
-                       blur_ksize: int = 31) -> np.ndarray:
+def _render_blur_fill(frame, alpha, blur_ksize=31):
     blurred = cv2.GaussianBlur(frame, (blur_ksize, blur_ksize), sigmaX=20)
     a = np.clip(alpha, 0, 1)[:, :, np.newaxis]
-    result = (frame.astype(np.float32) * (1 - a) + blurred.astype(np.float32) * a)
-    return result.astype(np.uint8)
+    return (frame.astype(np.float32) * (1 - a) + blurred.astype(np.float32) * a).astype(np.uint8)
 
 
 # ================================================================
@@ -176,60 +89,50 @@ def _render_blur_fill(frame: np.ndarray, alpha: np.ndarray,
 # ================================================================
 
 def apply_shadow_outline_effect(
-    frame: np.ndarray,
-    depth_order: List[int],
-    track_id_to_idx: dict,
-    track_results: List,
-    temporal_cache: TemporalMaskCache,
-    frame_idx: int,
-    dilate_kernel_size: int = 3,
-    fill_mode: str = "solid",
-    fill_color: str = "#000000",
-    border_color: str = "#FFFFFF",
-    opacity: float = 1.0,
-    target_ids: Optional[List[int]] = None,
-) -> np.ndarray:
+    frame, depth_order, track_id_to_idx, track_results,
+    dilate_kernel_size=3, fill_mode="solid",
+    fill_color="#000000", border_color="#FFFFFF", opacity=1.0,
+):
     h, w = frame.shape[:2]
     result = frame.copy()
     fill_bgr = _hex_to_bgr(fill_color)
     border_bgr = _hex_to_bgr(border_color)
-    grad_top = fill_bgr
-    grad_bot = tuple(max(0, c - 60) for c in fill_bgr)
+    grad_top, grad_bot = fill_bgr, tuple(max(0, c - 60) for c in fill_bgr)
 
-    # ================================================================
-    # Single-Pass: 远→近, 每人先画实体紧接着画白边, 作为一个整体被更近的人覆盖
-    # ================================================================
     for tid in depth_order:
         idx = track_id_to_idx.get(tid)
         if idx is None: continue
         tr = track_results[idx]
         alpha = tr.mask.astype(np.float32)
         if alpha.max() < 0.01: continue
+        # 软阈值映射: (x-0.10)/0.10 → clip [0,1]
+        # Cutie prob 0.20 → 1.0  (实心)
+        # Cutie prob 0.15 → 0.5  (过渡)
+        # Cutie prob 0.12 → 0.2  (微弱但不断)
+        # Cutie prob 0.10 → 0.0  (真背景, 不引入噪点)
+        alpha = np.clip((alpha - 0.10) / 0.10, 0.0, 1.0)
 
-        temporal_cache.update(tid, alpha, frame_idx)
-        blended_body = temporal_cache.get_blended_body(tid)
-        if blended_body is None: blended_body = alpha
+        # 主体遮罩使用软阈值 (连续值, 帧间无跳变)
+        body_dilate = max(3, dilate_kernel_size - 2)
+        body = blend_body(alpha, dilate_size=body_dilate)
+        # 白边使用硬阈值提取 (保持锐利), 在软阈值 alpha 上取 0.5 分界
+        alpha_edge = (alpha > 0.5).astype(np.float32)
+        edge = blend_edge(alpha_edge, edge_width=dilate_kernel_size)
 
-        # 1. 实体填充
         if fill_mode == "blur":
-            result = _render_blur_fill(result, blended_body * opacity)
+            result = _render_blur_fill(result, body * opacity)
         elif fill_mode == "gradient":
-            grad_layer = _render_gradient_fill(h, w, blended_body * opacity, grad_top, grad_bot)
-            a = np.clip(blended_body * opacity, 0, 1)[:, :, np.newaxis]
-            result = (result.astype(np.float32) * (1 - a)
-                      + grad_layer.astype(np.float32)).astype(np.uint8)
+            grad_layer = _render_gradient_fill(h, w, body * opacity, grad_top, grad_bot)
+            a = np.clip(body * opacity, 0, 1)[:, :, np.newaxis]
+            result = (result.astype(np.float32) * (1 - a) + grad_layer.astype(np.float32)).astype(np.uint8)
         else:
-            a = np.clip(blended_body * opacity, 0, 1)
+            a = np.clip(body * opacity, 0, 1)
             a3 = a[:, :, np.newaxis]
             fill = np.array(fill_bgr, dtype=np.float32).reshape(1, 1, 3)
             result = (result.astype(np.float32) * (1 - a3) + fill * a3).astype(np.uint8)
 
-        # 2. 白边 — 紧接在同一循环内绘制, "远人的白边"会被"近人的实体"正确覆盖
-        blended_edge = temporal_cache.get_blended_edge(tid, edge_width=dilate_kernel_size)
-        if blended_edge is None:
-            blended_edge = _extract_edge_alpha(blended_body, dilate_kernel_size)
-        if blended_edge.max() > 0.001:
-            e3 = blended_edge[:, :, np.newaxis]
+        if edge.max() > 0.001:
+            e3 = edge[:, :, np.newaxis]
             border = np.array(border_bgr, dtype=np.float32).reshape(1, 1, 3)
             result = (result.astype(np.float32) * (1 - e3) + border * e3).astype(np.uint8)
 
@@ -237,57 +140,129 @@ def apply_shadow_outline_effect(
 
 
 # ================================================================
-# 便捷函数
+# Pillow 文字标签 (正上方居中, 支持中文)
+# label_mode: "all" = 所有人(含默认ID) | "custom_only" = 仅自定义昵称
+# ================================================================
+
+FONT_PATHS = [
+    "/System/Library/Fonts/STHeiti Medium.ttc",   # macOS
+    "/System/Library/Fonts/PingFang.ttc",          # macOS
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",  # Linux
+    "C:/Windows/Fonts/msyh.ttc",                   # Windows
+]
+
+
+def _resolve_font():
+    for p in FONT_PATHS:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def draw_text_labels(frame_bgr, track_results, labels_config, font_path=None, label_mode="all", font_size=24):
+    """
+    在帧上绘制跟随人物的文字标签 (Pillow, 正上方居中)。
+    label_mode:
+      "all"         — 所有人: labels_config 有则 @昵称, 无则 ID:{id}
+      "custom_only" — 仅 labels_config 中存在的人, 仅 @昵称
+    """
+    if label_mode == "all" and labels_config is None:
+        labels_config = {}
+    if label_mode == "custom_only" and not labels_config:
+        return frame_bgr
+
+    fp = font_path if font_path and os.path.exists(font_path) else _resolve_font()
+    if fp is None:
+        return frame_bgr
+
+    h, w = frame_bgr.shape[:2]
+    pil_img = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    try:
+        font = ImageFont.truetype(fp, font_size)
+    except Exception:
+        return frame_bgr
+
+    for tr in track_results:
+        tid_str = str(tr.track_id)
+
+        # 确定要显示的文字
+        if label_mode == "all":
+            if labels_config and tid_str in labels_config:
+                text = "@" + labels_config[tid_str].get("text", "")
+            else:
+                text = f"人物{tr.track_id + 1}"
+        else:  # custom_only
+            if labels_config and tid_str in labels_config:
+                text = "@" + labels_config[tid_str].get("text", "")
+            else:
+                continue
+
+        if not text or text == "@":
+            continue
+
+        # ★ 从 bbox 计算正上方居中坐标 (比 mask 更稳定, 不受噪点影响)
+        x1, y1, x2, y2 = tr.bbox
+        center_x = (x1 + x2) / 2
+        top_y = y1
+
+        # Pillow 测量文字尺寸
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+        # 正上方居中: 水平居中, 垂直距头顶 25px
+        tx = max(0, min(center_x - tw // 2, w - tw))
+        ty = max(0, top_y - th - 25)
+
+        # 黑色半透明背景框
+        draw.rectangle([tx - 4, ty - 2, tx + tw + 4, ty + th + 2], fill=(0, 0, 0, 180))
+        draw.text((tx, ty), text, font=font, fill=(255, 255, 255))
+
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+
+# ================================================================
+# 便捷封装
 # ================================================================
 
 def process_frame_effects(
-    frame: np.ndarray,
-    track_results: List,
-    temporal_cache: Optional[TemporalMaskCache] = None,
-    smooth_history: Optional[dict] = None,
-    frame_idx: int = 0,
-    dilate_kernel_size: int = 3,
-    temporal_window: int = 8,
-    target_ids: Optional[List[int]] = None,
-    fill_mode: str = "solid",
-    fill_color: str = "#000000",
-    border_color: str = "#FFFFFF",
-    opacity: float = 1.0,
-) -> Tuple[np.ndarray, dict, TemporalMaskCache]:
-    if temporal_cache is None:
-        temporal_cache = TemporalMaskCache(window_size=temporal_window, ema_decay=0.3)
+    frame, track_results, smooth_history=None, frame_idx=0,
+    dilate_kernel_size=3, temporal_window=8, target_ids=None,
+    fill_mode="solid", fill_color="#000000",
+    border_color="#FFFFFF", opacity=1.0,
+    labels_config=None, font_path=None, label_mode="custom_only",
+):
+    """
+    对单帧应用特效 + 文字标签。
+    label_mode: "all" (预览,含默认ID) | "custom_only" (最终视频,仅昵称)
+    """
+    # 保留完整 track_results 给标签绘制用
+    all_track_results = track_results
 
+    # 打码仅作用于 target_ids
     if target_ids is not None:
         target_set = set(target_ids)
         track_results = [tr for tr in track_results if tr.track_id in target_set]
 
-    if not track_results:
-        return frame.copy(), (smooth_history or {}), temporal_cache
+    if track_results:
+        ordered_ids, smooth_history = calculate_depth_order(
+            track_results,
+            temporal_window=max(3, temporal_window // 2),
+            smooth_history=smooth_history,
+        )
+        track_id_to_idx = {tr.track_id: i for i, tr in enumerate(track_results)}
+        result = apply_shadow_outline_effect(
+            frame=frame, depth_order=ordered_ids,
+            track_id_to_idx=track_id_to_idx, track_results=track_results,
+            dilate_kernel_size=dilate_kernel_size,
+            fill_mode=fill_mode, fill_color=fill_color,
+            border_color=border_color, opacity=opacity,
+        )
+    else:
+        result = frame.copy()
 
-    ordered_ids, smooth_history = calculate_depth_order(
-        track_results,
-        temporal_window=max(3, temporal_window // 2),
-        smooth_history=smooth_history,
-    )
+    # 文字标签 (在特效之上, 使用完整 track_results)
+    result = draw_text_labels(result, all_track_results, labels_config,
+                               font_path=font_path, label_mode=label_mode)
 
-    track_id_to_idx = {tr.track_id: i for i, tr in enumerate(track_results)}
-
-    result = apply_shadow_outline_effect(
-        frame=frame,
-        depth_order=ordered_ids,
-        track_id_to_idx=track_id_to_idx,
-        track_results=track_results,
-        temporal_cache=temporal_cache,
-        frame_idx=frame_idx,
-        dilate_kernel_size=dilate_kernel_size,
-        fill_mode=fill_mode,
-        fill_color=fill_color,
-        border_color=border_color,
-        opacity=opacity,
-        target_ids=target_ids,
-    )
-
-    active_ids = {tr.track_id for tr in track_results}
-    temporal_cache.cleanup_stale(active_ids)
-
-    return result, smooth_history, temporal_cache
+    return result, smooth_history

@@ -1,28 +1,27 @@
 # ============================================================
-# 舞蹈视频智能打码/特效渲染系统 - 依赖清单
-# Phase 1: 环境搭建 & 视频I/O
+# 舞蹈视频智能打码/特效渲染系统 - 依赖清单 (SAM 2 架构)
 # ============================================================
 
 # 深度学习框架
-torch>=2.0.0
-torchvision>=0.15.0
+torch>=2.5.0
+torchvision>=0.20.0
 
-# YOLOv8 分割模型
+# YOLO 首帧检测
 ultralytics>=8.0.0
+
+# SAM 2 视频预测
+# pip install git+https://github.com/facebookresearch/sam2.git
 
 # 视频处理
 opencv-python>=4.8.0
 moviepy>=1.0.3
 
-# 多目标跟踪 (ByteTrack)
-# 通过 pip install boxmot 安装，内部包含 ByteTrack
-boxmot>=10.0.0
-
 # 数值计算
 numpy>=1.24.0
-
-# 配置管理
 pyyaml>=6.0
-
-# 进度条
 tqdm>=4.65.0
+
+# Web 服务
+fastapi>=0.100.0
+uvicorn>=0.20.0
+python-multipart>=0.0.5

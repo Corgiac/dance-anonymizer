@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pt
+*.task
+data/tasks/
+debug/
+input/
+output/
+uploads/
+.DS_Store
+.venv/
+vendor/
+*.xlsx
+技术实现文档*.md
+技术方案*.md
+v5之后改动记录.md
+参数表*.xlsx
