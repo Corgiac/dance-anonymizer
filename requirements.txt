@@ -1,5 +1,5 @@
 # ============================================================
-# 舞蹈视频智能打码/特效渲染系统 - 依赖清单 (SAM 2 架构)
+# 舞蹈视频智能打码/特效渲染系统 - 依赖清单 (Cutie 架构)
 # ============================================================
 
 # 深度学习框架
@@ -9,12 +9,20 @@ torchvision>=0.20.0
 # YOLO 首帧检测
 ultralytics>=8.0.0
 
-# SAM 2 视频预测
+# SAM 2 (首帧 mask 精修, Cutie 依赖)
 # pip install git+https://github.com/facebookresearch/sam2.git
+hydra-core>=1.3.0
+
+# Cutie 视频追踪引擎
+# git clone https://github.com/hkchengrex/Cutie.git vendor/Cutie
+# 注: macOS 非 CUDA 环境需 monkey-patch (engine.py 已处理)
 
 # 视频处理
 opencv-python>=4.8.0
 moviepy>=1.0.3
+
+# 图像处理 (文字标签)
+Pillow>=9.0.0
 
 # 数值计算
 numpy>=1.24.0
