@@ -15,3 +15,4 @@ vendor/
 技术方案*.md
 v5之后改动记录.md
 参数表*.xlsx
+debug_holes.py
