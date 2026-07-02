@@ -70,7 +70,7 @@ cd ~/Desktop/dance-anonymizer
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install git+https://github.com/facebookresearch/sam2.git
+pip install git+https://github.com/facebookresearch/sam2.git  # 需要梯子  # 需要梯子
 pip install -e vendor/Cutie
 ```
 
