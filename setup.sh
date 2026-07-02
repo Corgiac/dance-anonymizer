@@ -23,6 +23,12 @@ pip install -r requirements.txt -q
 
 
 
+# 合并 SAM2 模型分卷
+if [ ! -f "sam2_hiera_tiny.pt" ] && [ -f "sam2_hiera_tiny.pt.part_aa" ]; then
+    echo "合并模型文件..."
+    cat sam2_hiera_tiny.pt.part_* > sam2_hiera_tiny.pt
+fi
+
 echo ""
 echo "========================================"
 echo "  安装完成！"
