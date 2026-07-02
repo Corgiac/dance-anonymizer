@@ -14,10 +14,11 @@
 
 ### Mac
 
-**进入 `scripts/mac/` 文件夹，先双击 `setup.command`，然后双击双击 `run.command`。**（建议关闭 VPN）
+**进入 `scripts/mac/` 文件夹，先双击 `setup.command`，再双击 `run.command`。**（建议关闭 VPN）
 完成后浏览器打开 `http://localhost:8002`。
 
-> 如果双击提示"无法打开"，右键 → 打开方式 → 终端。
+> 如果双击提示"无法打开"：右键文件 → 按住 Option 键 → 点「打开」并确认。做一次以后就能正常双击了。
+> 或者终端运行一次：`xattr -cr scripts/mac/`
 
 ### Windows
 
