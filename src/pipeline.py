@@ -141,18 +141,20 @@ class DanceAnonymizerPipeline:
         all_tracked_ids = sorted(all_tracked) if all_tracked else [d.track_id for d in detections]
 
         # 创建引擎
+        if progress_callback:
+            progress_callback({"step": 2, "step_name": "加载追踪模型...", "step_total": 4})
         engine = create_tracker(engine_type, model_path=engine_model,
                                  verbose=show_progress)
         engine._max_input_dim = self.effect_config.get("max_input_dim", 960)
 
         if engine_type == "sam2":
-            # SAM 2: 从帧目录初始化
             engine.initialize_from_dir(frames_dir, first_frame,
                                         detections, all_tracked_ids)
         else:
-            # Cutie 等其他引擎: 帧级初始化 (已精修则跳过重复 SAM2)
             if sam2_already_refined and hasattr(engine, '_sam2_ckpt'):
-                engine._sam2_ckpt = None  # 禁用 Cutie 自己的 SAM2 精修
+                engine._sam2_ckpt = None
+            if progress_callback:
+                progress_callback({"step": 2, "step_name": "初始化追踪引擎...", "step_total": 4})
             engine.initialize(first_frame, detections, all_tracked_ids)
 
         # ---- 步骤 3: 追踪 + 渲染 ----
