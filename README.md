@@ -146,6 +146,17 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 2. 确认黑窗口里最后一行是 `Uvicorn running on ...`
 3. 确认网址写的是 `http://localhost:8002`（不是 https）
 
+### ? 提示 `address already in use`（端口被占用）
+
+说明之前已经启动过一个服务，关掉重开：
+
+Mac：
+```bash
+lsof -ti:8002 | xargs kill -9
+bash scripts/mac/run.sh
+```
+Windows：关掉所有黑窗口，重新双击 `run.bat`。
+
 ### ? 处理一半报错了 / 卡住了
 
 刷新网页，上传视频重新来一次。大概率是显存不够，尝试处理短一点的视频。
