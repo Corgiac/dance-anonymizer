@@ -8,9 +8,9 @@ echo.
 echo [1/4] 检查 Python...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ? 未找到 Python，请先安装 Python 3.10+
+    echo 未找到 Python，请先安装 Python 3.10+
     echo   下载地址: https://www.python.org/downloads/
-    echo   ?? 安装时务必勾选 "Add Python to PATH"
+    echo   安装时务必勾选 "Add Python to PATH"
     pause
     exit /b 1
 )
@@ -24,18 +24,21 @@ if not exist ".venv" (
 call .venv\Scripts\activate.bat
 echo.
 
-echo [3/4] 安装 Python 依赖（可能需要几分钟）...
+echo [3/4] 合并模型文件...
+if not exist "sam2_hiera_tiny.pt" (
+    if exist "sam2_hiera_tiny.pt.part_aa" (
+        copy /b sam2_hiera_tiny.pt.part_aa + sam2_hiera_tiny.pt.part_ab sam2_hiera_tiny.pt
+        echo 模型合并完成
+    )
+)
+echo.
+
+echo [4/4] 安装 Python 依赖（可能需要几分钟）...
 pip install -r requirements.txt -q
 echo.
 
-echo [4/4] 安装 SAM2 + Cutie...
-echo 这一步需要联网，如果卡住请开 VPN 重试
-pip install git+https://github.com/facebookresearch/sam2.git
-pip install -e vendor/Cutie
-echo.
-
 echo ========================================
-echo   ?? 安装完成！
+echo   安装完成！
 echo.
 echo   启动方式：
 echo   1. 双击 run.bat
