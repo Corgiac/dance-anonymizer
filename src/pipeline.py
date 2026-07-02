@@ -3,7 +3,7 @@ Phase 4a: 处理流水线 — YOLO + 可切换追踪引擎
 ================================================
 追踪引擎: SAM 2 (默认) | Cutie (备选)
 """
-import os, sys, time, shutil
+import os, time, shutil
 from typing import List, Optional
 
 import cv2
@@ -166,7 +166,6 @@ class DanceAnonymizerPipeline:
                 f"无法创建输出视频文件。请检查 OpenCV 编码器支持 (mp4v/avc1)。"
                 f"可尝试: pip install opencv-python-headless 或 conda install -c conda-forge opencv")
         smooth_history = {}
-        mask_fallback = {}  # {track_id: previous_mask} 单帧丢帧填补
         pbar = tqdm(total=actual_frames, desc=engine.step_name, unit="帧",
                      disable=not show_progress)
 
@@ -186,10 +185,6 @@ class DanceAnonymizerPipeline:
 
                 # 引擎步进 (传副本防止原地修改)
                 track_results = engine.step(frame.copy(), f_idx)
-
-                # 仅保留上一帧 mask 兜底 (SAM 2 已具备时序连贯性，不做 EMA 平滑)
-                for tr in track_results:
-                    mask_fallback[tr.track_id] = tr.mask.copy()
 
                 if not track_results:
                     writer.write(frame)

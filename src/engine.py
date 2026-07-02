@@ -3,13 +3,12 @@
 =====================================================
 BaseVideoTracker → SAM2Tracker | CutieTracker
 """
-import os, sys, time
+import os, sys
 import cv2
 import numpy as np
 import torch
-from typing import List, Iterator, Tuple
+from typing import List, Tuple
 from abc import ABC, abstractmethod
-from tqdm import tqdm
 
 from .tracker import TrackResult, compute_foot_y, compute_bbox_from_mask
 
@@ -100,13 +99,8 @@ class SAM2Tracker(BaseVideoTracker):
         # 从帧目录初始化 SAM 2 (帧需要预先抽取到 frames_dir)
         # 这里假设帧已经在 _frames_dir 目录中
         # 注意: SAM 2 的 init_state 需要加载全部帧, 所以帧目录必须在调用前准备好
-        import tempfile, shutil
-
         if self.verbose:
             print(f"[SAM2Tracker] 初始化, 设备: {self.device}")
-
-        # SAM 2 需要已存在的帧目录 (由 pipeline 准备好)
-        # 这个在 initialize 被调用时 frames_dir 必须存在
 
     def initialize_from_dir(self, frames_dir: str, first_frame: np.ndarray,
                              detections: List[TrackResult],

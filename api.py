@@ -4,9 +4,9 @@
 交互: 上传 → 实时调参预览 → 3s片段 / 全片渲染 (任选其一, 可取消)
 启动: uvicorn api:app --host 0.0.0.0 --port 8002
 """
-import os, sys, uuid, json, base64, shutil, cv2, time, threading, asyncio
+import os, sys, uuid, json, base64, shutil, cv2, threading, asyncio
 import numpy as np
-from typing import Optional, List, Dict
+from typing import Dict
 
 from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -17,6 +17,7 @@ from src.tracker import DanceTracker, TrackerConfig, TrackResult
 from src.pipeline import DanceAnonymizerPipeline
 from src.effects import (
     process_frame_effects, calculate_depth_order,
+    apply_shadow_outline_effect, draw_text_labels,
 )
 from src.utils import get_video_info
 
@@ -97,7 +98,6 @@ def _render_one_frame(frame, track_results, target_ids, params, labels_config=No
     if anonymize:
         ordered_ids, _ = calculate_depth_order(anonymize, temporal_window=1)
         tid_to_idx = {t.track_id: i for i, t in enumerate(anonymize)}
-        from src.effects import apply_shadow_outline_effect
         result = apply_shadow_outline_effect(
             frame=frame, depth_order=ordered_ids,
             track_id_to_idx=tid_to_idx, track_results=anonymize,
@@ -110,7 +110,6 @@ def _render_one_frame(frame, track_results, target_ids, params, labels_config=No
     else:
         result = frame.copy()
 
-    from src.effects import draw_text_labels
     result = draw_text_labels(result, all_track_results, labels_config, label_mode="all")
     return result
 
@@ -120,7 +119,7 @@ def _img_to_base64(img):
     return f"data:image/jpeg;base64,{base64.b64encode(buf).decode()}"
 
 
-def _parse_ids(target_ids_str, task):
+def _parse_ids(target_ids_str):
     if target_ids_str.strip():
         return [int(x.strip()) for x in target_ids_str.split(",") if x.strip()]
     return []
@@ -247,7 +246,7 @@ async def preview_frame(
     task = TASKS.get(task_id)
     if not task:
         return JSONResponse({"error": "task_id 无效"}, 404)
-    parsed_ids = _parse_ids(target_ids, task)
+    parsed_ids = _parse_ids(target_ids)
     labels_cfg = json.loads(labels_config) if labels_config.strip() else None
     try:
         params = {"fill_mode": fill_mode, "fill_color": fill_color,
@@ -279,12 +278,14 @@ async def preview_snippet(
     task = TASKS.get(task_id)
     if not task:
         return JSONResponse({"error": "task_id 无效"}, 404)
-    parsed_ids = _parse_ids(target_ids, task)
+    parsed_ids = _parse_ids(target_ids)
     labels_cfg = json.loads(labels_config) if labels_config.strip() else None
     video_path = task["video_path"]
     snippet_path = os.path.join(os.path.dirname(video_path), "snippet.mp4")
     snippet_frames = min(int(task["fps"] * 3), task["total_frames"])
 
+    cancel_event = threading.Event()
+    watcher_task = None
     try:
         # generation 计数器: 防止取消后旧线程覆盖新线程的进度
         gen = PROGRESS.get(task_id, {}).get("generation", 0) + 1
@@ -292,8 +293,6 @@ async def preview_snippet(
         def _on_progress(p):
             if PROGRESS.get(task_id, {}).get("generation") == gen:
                 PROGRESS[task_id] = {**p, "done": False, "generation": gen}
-
-        cancel_event = threading.Event()
 
         async def disconnect_watcher():
             while not cancel_event.is_set():
@@ -362,7 +361,7 @@ async def preview_snippet(
         cancel_event.set()
         return JSONResponse({"error": str(e)}, 500)
     finally:
-        if 'watcher_task' in dir():
+        if watcher_task is not None:
             watcher_task.cancel()
 
 
@@ -386,7 +385,7 @@ async def render(
     task = TASKS.get(task_id)
     if not task:
         return JSONResponse({"error": "task_id 无效"}, 404)
-    parsed_ids = _parse_ids(target_ids, task)
+    parsed_ids = _parse_ids(target_ids)
     labels_cfg = json.loads(labels_config) if labels_config.strip() else None
     if not parsed_ids:
         return JSONResponse({"error": "没有选中任何人"}, 400)

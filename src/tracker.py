@@ -6,7 +6,7 @@ Phase 2: 首帧检测模块 — YOLO → SAM 2 混合架构
 """
 import cv2
 import numpy as np
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 from dataclasses import dataclass
 from ultralytics import YOLO
 
@@ -140,10 +140,6 @@ class DanceTracker:
 
         track_results.sort(key=lambda t: t.track_id)
         return track_results
-
-    # 兼容旧接口 (api.py /analyze 单帧调用)
-    def track(self, frame: np.ndarray) -> List[TrackResult]:
-        return self.detect_first_frame(frame)
 
     def reset(self):
         pass
