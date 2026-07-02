@@ -10,27 +10,27 @@
 
 ## 快速开始
 
+（如没有需先装 Python（python.org 下载，安装时勾选 Add Python to PATH）。）
+
 ### Mac
 
-进入 `scripts/mac/` 文件夹，双击 `setup.command`，完成后双击 `run.command`。
-浏览器打开 `http://localhost:8002`。
+进入 `scripts/mac/` 文件夹，先双击 `setup.command`，然后双击双击 `run.command`。（建议关闭 VPN）
+完成后浏览器打开 `http://localhost:8002`。
 
 > 如果双击提示"无法打开"，右键 → 打开方式 → 终端。
 
 ### Windows
 
-**先装 Python**（python.org 下载，安装时勾选 Add Python to PATH）。
-然后进入 `scripts/windows/` 文件夹：
-**① 双击 setup.bat** → **② 双击 run.bat**。
-浏览器打开 `http://localhost:8002`。
+进入 `scripts/windows/` 文件夹：先双击 `setup.bat`， 然后双击 `run.bat`。（建议关闭 VPN）
+完成后浏览器打开 `http://localhost:8002`。
 
-> **注意**：没有 NVIDIA 显卡的电脑（纯 CPU 模式）第一次处理视频时初始化较慢，可能需等待 5-10 分钟，不是卡死了。如果报错，再点一次即可正常运行。建议关闭梯子/VPN 使用。
+> **注意**：没有 NVIDIA 显卡的电脑（纯 CPU 模式）第一次处理视频时初始化较慢，可能需等待 5-10 分钟，不是卡死了。如果报错，再点一次即可正常运行。
 
 ---
 
-## ? 完全没接触过代码，怎么用？
+## ？脚本执行不了怎么办
 
-跟着下面步骤走，**全程复制粘贴**，10 分钟搞定。遇到报错直接翻到最下面的「常见问题」。
+跟着下面步骤走，**全程复制粘贴**，轻松搞定。
 
 ---
 
@@ -78,7 +78,7 @@ cd dance-anonymizer
 
 ### Mac 用户
 
-打开「终端」，把下面三行**一行一行**复制进去，每行按回车：
+打开「终端」，把下面三行一行一行复制进去，每行按回车：
 
 ```bash
 cd ~/Desktop/dance-anonymizer
@@ -150,23 +150,11 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 1. 点「上传并分析」，选一个舞蹈视频
 2. 勾选你要打码的人（默认全选）
 3. 调颜色、白边、透明度（实时预览）
-4. 点「生成 3 秒预览」先试一下效果
+4. 可以点「生成 3 秒预览」先试一下效果
 5. 满意就点「生成完整视频」，等着就行
 6. 完成后点「下载视频」
 
 ---
-
-## 常见问题
-
-### ? 提示 `pip: command not found`
-
-Python 没装或者没勾选 PATH。回到第一步重装，Windows 一定要勾选「Add Python to PATH」。
-
-
-### ? 提示 `No module named 'cutie'`
-
-```bash
-```
 
 ### ? 网页打不开 / 显示「无法连接」
 
@@ -190,7 +178,7 @@ Python 没装或者没勾选 PATH。回到第一步重装，Windows 一定要勾
 
 ---
 
-## 给程序员朋友
+## 给不需要教程的朋友
 
 ```bash
 git clone https://github.com/Corgiac/dance-anonymizer.git
