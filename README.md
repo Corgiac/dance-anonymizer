@@ -10,18 +10,18 @@
 
 ## 快速开始
 
-（如没有需先装 Python（python.org 下载，安装时勾选 Add Python to PATH）。）
+（如没有需先装 Python）
 
 ### Mac
 
-进入 `scripts/mac/` 文件夹，先双击 `setup.command`，然后双击双击 `run.command`。（建议关闭 VPN）
+**进入 `scripts/mac/` 文件夹，先双击 `setup.command`，然后双击双击 `run.command`。**（建议关闭 VPN）
 完成后浏览器打开 `http://localhost:8002`。
 
 > 如果双击提示"无法打开"，右键 → 打开方式 → 终端。
 
 ### Windows
 
-进入 `scripts/windows/` 文件夹：先双击 `setup.bat`， 然后双击 `run.bat`。（建议关闭 VPN）
+**进入 `scripts/windows/` 文件夹：先双击 `setup.bat`， 然后双击 `run.bat`。**（建议关闭 VPN）
 完成后浏览器打开 `http://localhost:8002`。
 
 > **注意**：没有 NVIDIA 显卡的电脑（纯 CPU 模式）第一次处理视频时初始化较慢，可能需等待 5-10 分钟，不是卡死了。如果报错，再点一次即可正常运行。
@@ -36,26 +36,6 @@
 
 ## 第一步：安装 Python（已经装过的跳过）
 
-### Mac 用户
-
-1. 打开 https://www.python.org/downloads/
-2. 点那个黄色大按钮下载
-3. 双击下载的文件，一路点「继续」→「安装」
-4. 安装完关掉窗口
-
-### Windows 用户
-
-1. 打开 https://www.python.org/downloads/
-2. 点黄色大按钮下载
-3. **? 重要**：安装界面第一页，**勾选底部的「Add Python to PATH」**，然后再点 Install
-4. 装完重启电脑（让 PATH 生效）
-
-> ? 怎么确认装好了？  
-> Mac：打开「终端」（在启动台搜 Terminal），输入 `python3 --version`，回车。出现 `Python 3.x.x` 就对了。  
-> Windows：按 `Win+R`，输入 `cmd`，回车。在黑窗口输入 `python --version`，回车。出现 `Python 3.x.x` 就对了。
-
----
-
 ## 第二步：下载项目
 
 ### 如果你有 Git
@@ -67,10 +47,9 @@ cd dance-anonymizer
 
 ### 如果没用过 Git（更简单）
 
-1. 打开 https://github.com/Corgiac/dance-anonymizer
-2. 点绿色的 **Code** 按钮 → **Download ZIP**
-3. 解压到你喜欢的文件夹（比如桌面）
-4. 文件夹名字改成 `dance-anonymizer`
+1. 点绿色的 **Code** 按钮 → **Download ZIP**
+2. 解压到你喜欢的文件夹（比如桌面）
+3. 文件夹名字改成 `dance-anonymizer`
 
 ---
 
@@ -185,7 +164,7 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 
 ---
 
-## 给不需要教程的朋友
+## 命令行快速启动
 
 Mac：
 ```bash
