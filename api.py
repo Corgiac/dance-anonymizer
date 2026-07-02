@@ -825,6 +825,7 @@ function startProgress(onDone){
   $('progressFill').style.width='0%'; $('progressPct').textContent='0%';
   $('progressFps').textContent=''; $('progressEta').textContent='';
   $('progressStep').textContent='准备中...';
+  setTimeout(function(){ $('progressCard').scrollIntoView({behavior:'smooth',block:'end'}); },100);
   function poll(){
     if(!taskId)return;
     fetch('/status/'+taskId).then(r=>r.json()).then(p=>{
