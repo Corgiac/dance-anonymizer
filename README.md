@@ -4,6 +4,8 @@
 
 ![打码效果展示](assets/result.GIF)
 
+![手机端展示](assets/dem.jpg)
+
 ---
 
 ## ? 完全没接触过代码，怎么用？
