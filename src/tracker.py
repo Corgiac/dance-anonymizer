@@ -9,6 +9,16 @@ import numpy as np
 from typing import List, Tuple
 from dataclasses import dataclass
 from ultralytics import YOLO
+import torch
+
+
+def auto_device() -> str:
+    """自动检测最佳推理设备"""
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 @dataclass

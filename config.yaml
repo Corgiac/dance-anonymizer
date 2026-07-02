@@ -5,7 +5,7 @@
 # ---- YOLO 首帧检测 ----
 model:
   path: "yolo11s-seg.pt"         # YOLO 分割模型
-  device: "mps"                   # 推理设备: mps / cuda / cpu
+  device: "auto"                  # 推理设备: auto(自动) / cuda / mps / cpu
   conf_threshold: 0.3             # 检测置信度阈值
   iou_threshold: 0.55             # NMS IoU 阈值
   imgsz: 1280                     # 推理分辨率

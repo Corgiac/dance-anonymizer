@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.tracker import DanceTracker, TrackerConfig, TrackResult
+from src.tracker import DanceTracker, TrackerConfig, TrackResult, auto_device
 from src.pipeline import DanceAnonymizerPipeline
 from src.effects import (
     process_frame_effects, calculate_depth_order,
@@ -162,7 +162,7 @@ async def analyze(file: UploadFile = File(...)):
         if not ret or best_frame is None:
             return JSONResponse({"error": "无法读取视频帧"}, 400)
 
-        tracker = DanceTracker(TrackerConfig(device="mps", verbose=False))
+        tracker = DanceTracker(TrackerConfig(device=auto_device(), verbose=False))
         raw_results = tracker.detect_first_frame(best_frame)
         raw_results.sort(key=lambda t: (t.bbox[0] + t.bbox[2]) / 2.0)
 
@@ -179,7 +179,7 @@ async def analyze(file: UploadFile = File(...)):
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             sam2_ckpt = os.path.join(BASE_DIR, "sam2_hiera_tiny.pt")
-            sam2 = build_sam2("sam2_hiera_t.yaml", ckpt_path=sam2_ckpt, device="mps")
+            sam2 = build_sam2("sam2_hiera_t.yaml", ckpt_path=sam2_ckpt, device=auto_device())
             predictor = SAM2ImagePredictor(sam2)
             predictor.set_image(best_frame)
             for tr in raw_results:
@@ -273,7 +273,7 @@ async def preview_snippet(
     border_color: str = Form("#FFFFFF"),
     thickness: int = Form(3),
     opacity: float = Form(1.0),
-    device: str = Form("mps"),
+    device: str = Form(""),
 ):
     task = TASKS.get(task_id)
     if not task:
@@ -305,7 +305,7 @@ async def preview_snippet(
 
         pipeline = DanceAnonymizerPipeline(
             tracker_config=TrackerConfig(model_path="yolo11s-seg.pt",
-                                          device=device, conf_threshold=0.3,
+                                          device=device or auto_device(), conf_threshold=0.3,
                                           verbose=False),
             effect_config={"dilate_kernel_size": max(1, min(thickness, 15))},
             engine_config={"type": "cutie", "model_path": "sam2_hiera_tiny.pt"},
@@ -380,7 +380,7 @@ async def render(
     border_color: str = Form("#FFFFFF"),
     thickness: int = Form(3),
     opacity: float = Form(1.0),
-    device: str = Form("mps"),
+    device: str = Form(""),
 ):
     task = TASKS.get(task_id)
     if not task:
@@ -409,7 +409,7 @@ async def render(
     try:
         pipeline = DanceAnonymizerPipeline(
             tracker_config=TrackerConfig(model_path="yolo11s-seg.pt",
-                                          device=device, conf_threshold=0.3,
+                                          device=device or auto_device(), conf_threshold=0.3,
                                           verbose=False),
             effect_config={"dilate_kernel_size": max(1, min(thickness, 15))},
             engine_config={"type": "cutie", "model_path": "sam2_hiera_tiny.pt"},
