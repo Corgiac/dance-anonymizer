@@ -25,14 +25,9 @@ pip install -r requirements.txt -q
 echo "[4/5] 安装 SAM2（首帧抠图精修）..."
 pip install git+https://github.com/facebookresearch/sam2.git -q 2>/dev/null || echo "SAM2 安装失败，请手动安装: pip install git+https://github.com/facebookresearch/sam2.git"
 
-# 克隆 Cutie
-echo "[5/5] 克隆 Cutie（全片追踪引擎）..."
-if [ ! -d "vendor/Cutie" ]; then
-    git clone https://github.com/hkchengrex/Cutie.git vendor/Cutie --depth 1
-    pip install -e vendor/Cutie -q 2>/dev/null || echo "Cutie 安装失败，请手动安装: pip install -e vendor/Cutie"
-else
-    echo "  vendor/Cutie 已存在，跳过"
-fi
+# 安装 Cutie
+echo "[5/5] 安装 Cutie（全片追踪引擎）..."
+pip install -e vendor/Cutie -q 2>/dev/null || echo "Cutie 安装失败，请手动安装: pip install -e vendor/Cutie"
 
 echo ""
 echo "========================================"

@@ -7,7 +7,6 @@ output/
 uploads/
 .DS_Store
 .venv/
-vendor/
 *.xlsx
 技术实现文档*.md
 技术方案*.md

@@ -27,10 +27,8 @@ pip install -r requirements.txt
 # 安装 SAM2（首帧抠图精修）
 pip install git+https://github.com/facebookresearch/sam2.git
 
-# 克隆 Cutie（全片追踪引擎）
-git clone https://github.com/hkchengrex/Cutie.git vendor/Cutie
 
-# 安装 Cutie 依赖
+# 安装 Cutie（已内置在仓库中）
 pip install -e vendor/Cutie
 ```
 
