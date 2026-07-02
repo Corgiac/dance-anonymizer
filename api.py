@@ -486,9 +486,11 @@ async def get_result(task_id: str, res: str = "original", fps: str = "original")
                 if clip.w > _target_w or clip.h > _target_h:
                     ratio = min(_target_w / clip.w, _target_h / clip.h)
                     w, h = int(clip.w * ratio), int(clip.h * ratio)
-                    clip = clip.resized(newsize=(w, h))
+                    try: clip = clip.resized(newsize=(w, h))
+                    except AttributeError: clip = clip.resize(newsize=(w, h))
             if _target_fps and abs(clip.fps - _target_fps) > 1:
-                clip = clip.with_fps(_target_fps)
+                try: clip = clip.with_fps(_target_fps)
+                except AttributeError: clip.fps = _target_fps
             clip.write_videofile(transcode_path, codec="libx264",
                                   audio_codec="aac", logger=None)
             return transcode_path
