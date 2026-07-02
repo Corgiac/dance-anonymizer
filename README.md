@@ -4,7 +4,7 @@
 
 ![打码效果展示](assets/result.GIF)
 
-![手机端展示](assets/dem.jpg)
+<img src="assets/dem.jpg" alt="手机端展示" width="320">
 
 ---
 
