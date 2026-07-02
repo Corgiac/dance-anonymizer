@@ -12,6 +12,7 @@ from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "sam2"))
 
 from src.tracker import DanceTracker, TrackerConfig, TrackResult, auto_device
 from src.pipeline import DanceAnonymizerPipeline

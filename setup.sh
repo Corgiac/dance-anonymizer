@@ -21,9 +21,6 @@ source .venv/bin/activate
 echo "[3/5] 安装 Python 依赖..."
 pip install -r requirements.txt -q
 
-# 安装 SAM2
-echo "[4/5] 安装 SAM2（首帧抠图精修）..."
-pip install git+https://github.com/facebookresearch/sam2.git -q 2>/dev/null || echo "SAM2 安装失败，请手动安装: pip install git+https://github.com/facebookresearch/sam2.git"
 
 # 安装 Cutie
 echo "[5/5] 安装 Cutie（全片追踪引擎）..."

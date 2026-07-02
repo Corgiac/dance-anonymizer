@@ -70,7 +70,6 @@ cd ~/Desktop/dance-anonymizer
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install git+https://github.com/facebookresearch/sam2.git  # 需要梯子  # 需要梯子
 pip install -e vendor/Cutie
 ```
 
@@ -90,7 +89,6 @@ cd C:\Users\你的用户名\Desktop\dance-anonymizer
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-pip install git+https://github.com/facebookresearch/sam2.git
 pip install -e vendor/Cutie
 ```
 
@@ -146,13 +144,6 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 
 Python 没装或者没勾选 PATH。回到第一步重装，Windows 一定要勾选「Add Python to PATH」。
 
-### ? 提示 `No module named 'sam2'`
-
-SAM2 安装失败（网络问题）。手动重试：
-```bash
-pip install git+https://github.com/facebookresearch/sam2.git
-```
-如果还是失败，开 VPN 再试。
 
 ### ? 提示 `No module named 'cutie'`
 
@@ -189,7 +180,6 @@ git clone https://github.com/Corgiac/dance-anonymizer.git
 cd dance-anonymizer
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pip install git+https://github.com/facebookresearch/sam2.git
 pip install -e vendor/Cutie
 uvicorn api:app --host 0.0.0.0 --port 8002
 ```
