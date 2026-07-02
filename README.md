@@ -187,10 +187,20 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 
 ## 给不需要教程的朋友
 
+Mac：
 ```bash
 git clone https://github.com/Corgiac/dance-anonymizer.git
 cd dance-anonymizer
 python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn api:app --host 0.0.0.0 --port 8002
+```
+
+Windows：
+```bash
+git clone https://github.com/Corgiac/dance-anonymizer.git
+cd dance-anonymizer
+python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn api:app --host 0.0.0.0 --port 8002
 ```
