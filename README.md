@@ -8,6 +8,35 @@
 
 ---
 
+## 快速开始
+
+### Mac
+
+打开终端，复制粘贴：
+
+```bash
+cd 这里拖入项目文件夹
+bash scripts/mac/setup.sh
+bash scripts/mac/run.sh
+```
+
+浏览器打开 `http://localhost:8002`
+
+### Windows
+
+**先装 Python**（python.org 下载，安装时勾选 Add Python to PATH），然后双击：
+
+```
+① scripts/windows/setup.bat
+② scripts/windows/run.bat
+```
+
+浏览器打开 `http://localhost:8002`
+
+> **注意**：没有 NVIDIA 显卡的电脑（纯 CPU 模式）第一次处理视频时初始化较慢，可能需等待 5-10 分钟，不是卡死了。如果报错，再点一次即可正常运行。建议关闭梯子/VPN 使用。
+
+---
+
 ## ? 完全没接触过代码，怎么用？
 
 跟着下面步骤走，**全程复制粘贴**，10 分钟搞定。遇到报错直接翻到最下面的「常见问题」。
