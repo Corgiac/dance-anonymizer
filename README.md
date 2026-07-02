@@ -2,9 +2,9 @@
 
 上传舞蹈视频 → 勾选人物 → 一键生成打码。AI 自动追踪全身，快速动作也不会漏。
 
-![打码效果展示](assets/result.GIF)
-
 <img src="assets/dem.jpg" alt="手机端展示" width="320">
+
+<img src="assets/result.GIF" alt="打码效果展示" width="640">
 
 ---
 
