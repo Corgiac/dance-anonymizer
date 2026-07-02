@@ -852,7 +852,7 @@ function startProgress(onDone){
         return;
       }
       if(p.running || p.step>0){
-        $('progressStep').textContent=(p.step_name||'处理中')+' · '+p.step+'/'+p.step_total;
+        var names={1:'准备视频',2:'分析人物',3:'智能处理',4:'生成视频'};$('progressStep').textContent=(names[p.step]||'处理中')+' · '+p.step+'/'+p.step_total;
         if(p.frames_total>0){
           var pct=Math.round(p.frames_done/p.frames_total*100);
           $('progressFill').style.width=pct+'%';
