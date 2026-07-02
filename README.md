@@ -34,14 +34,6 @@ git clone https://github.com/hkchengrex/Cutie.git vendor/Cutie
 pip install -e vendor/Cutie
 ```
 
-### 3. 下载模型文件
-
-| 模型 | 用途 | 下载链接 |
-|------|------|---------|
-| yolo11s-seg.pt | 首帧人物检测 | [Ultralytics](https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s-seg.pt) |
-| sam2_hiera_tiny.pt | 首帧抠图精修 | [Meta SAM2](https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2_hiera_tiny.pt) |
-
-下载后放到项目根目录。
 
 ### 4. 启动
 
