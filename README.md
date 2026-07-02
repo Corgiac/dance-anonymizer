@@ -70,7 +70,6 @@ cd ~/Desktop/dance-anonymizer
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install -e vendor/Cutie
 ```
 
 看到 `Successfully installed ...` 就说明装好了。
@@ -89,7 +88,6 @@ cd C:\Users\你的用户名\Desktop\dance-anonymizer
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-pip install -e vendor/Cutie
 ```
 
 ---
@@ -148,7 +146,6 @@ Python 没装或者没勾选 PATH。回到第一步重装，Windows 一定要勾
 ### ? 提示 `No module named 'cutie'`
 
 ```bash
-pip install -e vendor/Cutie
 ```
 
 ### ? 网页打不开 / 显示「无法连接」
@@ -180,6 +177,5 @@ git clone https://github.com/Corgiac/dance-anonymizer.git
 cd dance-anonymizer
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pip install -e vendor/Cutie
 uvicorn api:app --host 0.0.0.0 --port 8002
 ```

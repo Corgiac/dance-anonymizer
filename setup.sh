@@ -22,9 +22,6 @@ echo "[3/5] 安装 Python 依赖..."
 pip install -r requirements.txt -q
 
 
-# 安装 Cutie
-echo "[5/5] 安装 Cutie（全片追踪引擎）..."
-pip install -e vendor/Cutie -q 2>/dev/null || echo "Cutie 安装失败，请手动安装: pip install -e vendor/Cutie"
 
 echo ""
 echo "========================================"
