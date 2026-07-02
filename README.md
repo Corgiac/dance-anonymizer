@@ -12,26 +12,17 @@
 
 ### Mac
 
-打开终端，复制粘贴：
+进入 `scripts/mac/` 文件夹，双击 `setup.command`，完成后双击 `run.command`。
+浏览器打开 `http://localhost:8002`。
 
-```bash
-cd 这里拖入项目文件夹
-bash scripts/mac/setup.sh
-bash scripts/mac/run.sh
-```
-
-浏览器打开 `http://localhost:8002`
+> 如果双击提示"无法打开"，右键 → 打开方式 → 终端。
 
 ### Windows
 
-**先装 Python**（python.org 下载，安装时勾选 Add Python to PATH），然后双击：
-
-```
-① scripts/windows/setup.bat
-② scripts/windows/run.bat
-```
-
-浏览器打开 `http://localhost:8002`
+**先装 Python**（python.org 下载，安装时勾选 Add Python to PATH）。
+然后进入 `scripts/windows/` 文件夹：
+**① 双击 setup.bat** → **② 双击 run.bat**。
+浏览器打开 `http://localhost:8002`。
 
 > **注意**：没有 NVIDIA 显卡的电脑（纯 CPU 模式）第一次处理视频时初始化较慢，可能需等待 5-10 分钟，不是卡死了。如果报错，再点一次即可正常运行。建议关闭梯子/VPN 使用。
 
