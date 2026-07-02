@@ -319,7 +319,7 @@ class CutieTracker(BaseVideoTracker):
             cutie_idx += 1
 
         if not self._objects:
-            raise RuntimeError("Cutie: 没有需要追踪的目标")
+            raise ValueError("当前画面未检测到明显的人物轮廓，请更换视频重试！")
 
         # Cutie 硬编码 .cuda() + autocast + torch.load(CUDA), 需 monkey-patch
         if self.device != "cuda":
@@ -352,16 +352,27 @@ class CutieTracker(BaseVideoTracker):
             self._model = get_default_model()
 
         self._processor = InferenceCore(self._model, cfg=self._model.cfg)
-        self._processor.max_internal_size = max(self._h, self._w)
+        # 限制内部处理分辨率，大幅提速（768 对打码精度几乎无影响）
+        self._processor.max_internal_size = min(max(self._h, self._w), 768)
 
-        # 首帧: BGR→RGB→tensor→设备
+        # 首帧: 与 step 保持一致的缩小策略
         frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
+        self._scale = 1.0
+        if hasattr(self, '_max_input_dim'):
+            h, w = frame_rgb.shape[:2]
+            longest = max(h, w)
+            if longest > self._max_input_dim:
+                self._scale = self._max_input_dim / longest
+                new_w, new_h = int(w * self._scale), int(h * self._scale)
+                frame_rgb = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                combined_mask = cv2.resize(combined_mask.astype(np.float32), (new_w, new_h),
+                                           interpolation=cv2.INTER_NEAREST).astype(np.int32)
+
         frame_tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1).float() / 255.0
         frame_tensor = frame_tensor.to(self.device)
         mask_tensor = torch.from_numpy(combined_mask).to(self.device)
 
         with torch.no_grad():
-            # 去掉 autocast (非 CUDA 不支持)
             self._processor.step(frame_tensor, mask_tensor,
                                   objects=self._objects)
 
@@ -370,6 +381,11 @@ class CutieTracker(BaseVideoTracker):
             return []
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # 与初始化保持一致的缩小策略
+        if self._scale != 1.0:
+            new_w, new_h = int(frame_rgb.shape[1] * self._scale), int(frame_rgb.shape[0] * self._scale)
+            frame_rgb = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
         frame_tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1).float() / 255.0
         frame_tensor = frame_tensor.to(self.device)
 
@@ -386,10 +402,13 @@ class CutieTracker(BaseVideoTracker):
         for obj_idx in self._objects:
             if obj_idx >= prob_np.shape[0]:
                 continue
-            # ★ Cutie 的 prob 按 obj_idx 索引, 不是按 enumerate 的 i
             mask = prob_np[obj_idx].astype(np.float32)
             mask = np.clip(mask, 0.0, 1.0)
+            # 还原到原始分辨率
             if mask.shape[:2] != (self._h, self._w):
+                mask = cv2.resize(mask, (self._w, self._h),
+                                  interpolation=cv2.INTER_LINEAR)
+                mask = np.clip(mask, 0.0, 1.0)
                 mask = cv2.resize(mask, (self._w, self._h),
                                   interpolation=cv2.INTER_LINEAR)
                 mask = np.clip(mask, 0.0, 1.0)

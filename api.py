@@ -120,7 +120,7 @@ def _img_to_base64(img):
 
 
 def _parse_ids(target_ids_str):
-    if target_ids_str.strip():
+    if target_ids_str and target_ids_str.strip():
         return [int(x.strip()) for x in target_ids_str.split(",") if x.strip()]
     return []
 
@@ -147,9 +147,8 @@ async def analyze(file: UploadFile = File(...)):
     video_path = os.path.join(task_dir, f"source{ext}")
 
     try:
-        content = await file.read()
         with open(video_path, "wb") as f:
-            f.write(content)
+            shutil.copyfileobj(file.file, f)
 
         cap = cv2.VideoCapture(video_path)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -161,6 +160,8 @@ async def analyze(file: UploadFile = File(...)):
 
         if not ret or best_frame is None:
             return JSONResponse({"error": "无法读取视频帧"}, 400)
+        if fps <= 0: fps = 30.0
+        if total_frames <= 0: return JSONResponse({"error": "视频文件损坏，无法读取帧信息！"}, 400)
 
         tracker = DanceTracker(TrackerConfig(device=auto_device(), verbose=False))
         raw_results = tracker.detect_first_frame(best_frame)
@@ -457,7 +458,7 @@ async def render(
 # ================================================================
 
 @app.get("/result/{task_id}")
-async def get_result(task_id: str, res: str = "original"):
+async def get_result(task_id: str, res: str = "original", fps: str = "original"):
     p = PROGRESS.get(task_id, {})
     if not p.get("done"):
         return JSONResponse({"status": "not_ready"}, 202)
@@ -470,31 +471,37 @@ async def get_result(task_id: str, res: str = "original"):
     RES_MAP = {"2k": (2560, 1440), "1080p": (1920, 1080),
                "720p": (1280, 720), "480p": (854, 480)}
 
-    def _transcode(_output_path, _res, _target_w, _target_h):
-        transcode_path = _output_path + f".{_res}.mp4"
+    def _transcode(_output_path, _res, _target_w, _target_h, _target_fps):
+        suffix = f".{_res}" if _res != "original" else ""
+        suffix += f".{_target_fps}fps" if _target_fps else ""
+        transcode_path = _output_path + suffix + ".mp4"
         if os.path.exists(transcode_path):
             return transcode_path
         from moviepy.video.io.VideoFileClip import VideoFileClip
         clip = VideoFileClip(_output_path)
         try:
-            if clip.w <= _target_w and clip.h <= _target_h:
-                return _output_path
-            ratio = min(_target_w / clip.w, _target_h / clip.h)
-            new_w, new_h = int(clip.w * ratio), int(clip.h * ratio)
-            clip = clip.resized(newsize=(new_w, new_h))
+            if _res != "original":
+                if clip.w > _target_w or clip.h > _target_h:
+                    ratio = min(_target_w / clip.w, _target_h / clip.h)
+                    w, h = int(clip.w * ratio), int(clip.h * ratio)
+                    clip = clip.resized(newsize=(w, h))
+            if _target_fps and abs(clip.fps - _target_fps) > 1:
+                clip = clip.with_fps(_target_fps)
             clip.write_videofile(transcode_path, codec="libx264",
                                   audio_codec="aac", logger=None)
             return transcode_path
         finally:
             clip.close()
 
-    if res == "original" or res not in RES_MAP:
-        final_path = output_path
-    else:
-        target_w, target_h = RES_MAP[res]
+    need_resize = res in RES_MAP and res != "original"
+    target_fps = int(fps) if fps.isdigit() else 0
+    if need_resize or target_fps:
+        target_w, target_h = RES_MAP.get(res, (99999, 99999))
         loop = asyncio.get_running_loop()
         final_path = await loop.run_in_executor(
-            None, _transcode, output_path, res, target_w, target_h)
+            None, _transcode, output_path, res, target_w, target_h, target_fps)
+    else:
+        final_path = output_path
 
     download_name = "dance_anonymized_" + task_id + ".mp4"
     return FileResponse(
@@ -515,7 +522,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#18181B;color:#F4F4F5;display:flex;justify-content:center;min-height:100vh;padding:20px}
 .container{max-width:820px;width:100%}
-h1{text-align:center;color:#fff;font-size:1.5em;margin-bottom:4px}
+h1{text-align:center;color:#fff;font-size:1.5em;margin-bottom:20px}
 .sub{text-align:center;color:#A1A1AA;margin-bottom:24px;font-size:.9em}
 .card{background:#27272A;border-radius:12px;padding:20px;margin-bottom:24px;border:1px solid #3F3F46}
 .card h2{font-size:1.05em;color:#A78BFA;margin-bottom:14px;font-weight:600}
@@ -532,7 +539,7 @@ label.block{display:block;font-size:.83em;color:#A1A1AA;margin-bottom:4px}
 .btn-cancel{background:#F97316!important;color:#fff!important;animation:pulse .8s infinite alternate}
 @keyframes pulse{from{opacity:1}to{opacity:0.7}}
 .preview-card{flex-shrink:0;margin-bottom:12px}
-.preview-card img{max-width:100%;border-radius:8px;border:1px solid #3F3F46;display:block}
+.preview-card img,video{max-width:100%;max-height:50vh;object-fit:contain;background:#121214;border-radius:8px;border:1px solid #3F3F46;display:block;margin:0 auto}
 .id-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .id-row{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#202022;border-radius:8px;width:100%;box-sizing:border-box}
 .id-row .cb-label{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.9em;color:#D4D4D8;white-space:nowrap;min-width:70px}
@@ -553,7 +560,6 @@ input[type=range]{width:100%;accent-color:#A78BFA}
 .scrollable-controls{flex:1;overflow-y:auto;padding-right:4px;padding-bottom:20px}
 .scrollable-controls::-webkit-scrollbar{width:6px}
 .scrollable-controls::-webkit-scrollbar-thumb{background:#52525B;border-radius:4px}
-video{max-width:100%;border-radius:8px;margin-top:8px}
 .spinner{display:inline-block;width:14px;height:14px;border:2px solid #fff6;border-top-color:#fff;border-radius:50%;animation:spin .5s linear infinite;margin-right:6px;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
 #snippetStatus,#renderStatus{margin-top:10px;font-size:.85em}
@@ -567,9 +573,8 @@ video{max-width:100%;border-radius:8px;margin-top:8px}
   body{padding:8px}
   .container{max-width:100%}
   .card{padding:10px;margin-bottom:12px}
-  h1{font-size:1.2em;margin-bottom:2px}
+  h1{font-size:1.2em;margin-bottom:16px}
   .sub{font-size:.78em;margin-bottom:10px}
-  img,video{max-width:100%;height:auto}
   .id-list{display:flex;flex-direction:column;gap:6px}
   .id-row{display:flex;flex-direction:row!important;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;width:100%;flex-wrap:nowrap!important}
   .id-row .cb-label{min-width:auto;font-size:.85em}
@@ -593,7 +598,6 @@ video{max-width:100%;border-radius:8px;margin-top:8px}
 <body>
 <div class="container">
 <h1>舞蹈视频智能打码</h1>
-<p class="sub">上传视频 · 选择对象 · 一键渲染</p>
 
 <div id="step1" class="card active">
   <h2>Step 1 — 上传视频</h2>
@@ -668,28 +672,35 @@ video{max-width:100%;border-radius:8px;margin-top:8px}
   <div id="resultArea"></div>
 </div>
 <div class="modal-overlay" id="qualityModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);justify-content:center;align-items:center">
-  <div class="modal-card" style="background:#27272A;border-radius:12px;padding:24px;border:1px solid #3F3F46;min-width:300px;text-align:center">
+  <div class="modal-card" style="background:#27272A;border-radius:12px;padding:24px;border:1px solid #3F3F46;min-width:300px;max-width:340px;text-align:center">
     <h3 style="color:#F4F4F5;margin-bottom:16px">选择下载画质</h3>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
-      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#3F3F46;border-radius:8px;cursor:pointer;color:#F4F4F5">
-        <input type="radio" name="quality" value="2k" checked style="accent-color:#7C3AED;width:16px;height:16px"> 2K
-      </label>
-      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#3F3F46;border-radius:8px;cursor:pointer;color:#F4F4F5">
-        <input type="radio" name="quality" value="1080p" style="accent-color:#7C3AED;width:16px;height:16px"> 1080P
-      </label>
-      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#3F3F46;border-radius:8px;cursor:pointer;color:#F4F4F5">
-        <input type="radio" name="quality" value="720p" style="accent-color:#7C3AED;width:16px;height:16px"> 720P
-      </label>
-      <label style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:#3F3F46;border-radius:8px;cursor:pointer;color:#F4F4F5">
-        <input type="radio" name="quality" value="480p" style="accent-color:#7C3AED;width:16px;height:16px"> 480P
-      </label>
+    <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:24px">
+      <div class="form-group" style="display:flex;justify-content:space-between;align-items:center">
+        <label style="color:#A1A1AA;font-size:.9em">分辨率</label>
+        <select id="downloadRes" style="width:140px;height:38px;background:#3F3F46;border:none;color:#F4F4F5;padding:0 12px;border-radius:6px;font-size:.9em">
+          <option value="original">原始画质</option>
+          <option value="2k">2K</option>
+          <option value="1080p">1080P</option>
+          <option value="720p">720P</option>
+          <option value="480p">480P</option>
+        </select>
+      </div>
+      <div class="form-group" style="display:flex;justify-content:space-between;align-items:center">
+        <label style="color:#A1A1AA;font-size:.9em">帧率</label>
+        <select id="downloadFps" style="width:140px;height:38px;background:#3F3F46;border:none;color:#F4F4F5;padding:0 12px;border-radius:6px;font-size:.9em">
+          <option value="original">原始帧率</option>
+          <option value="60">60 FPS</option>
+          <option value="50">50 FPS</option>
+          <option value="30">30 FPS</option>
+          <option value="24">24 FPS</option>
+        </select>
+      </div>
     </div>
     <div style="display:flex;gap:10px">
       <button id="modalCancel" style="flex:1;padding:10px;background:transparent;border:1px solid #3F3F46;border-radius:8px;color:#A1A1AA;cursor:pointer;font-size:.9em">取消</button>
       <button id="modalConfirm" style="flex:1;padding:10px;background:#7C3AED;border:none;border-radius:8px;color:#fff;cursor:pointer;font-size:.9em;font-weight:700">确认下载</button>
     </div>
   </div>
-</div>
 </div>
 
 <script>
@@ -711,11 +722,15 @@ document.addEventListener('DOMContentLoaded', function(){
   if(mc) mc.addEventListener('click', hideQualityModal);
   if(mq) mq.addEventListener('click', function(e){ if(e.target===this) hideQualityModal(); });
   if(mf) mf.addEventListener('click', function(){
-    var sel=document.querySelector('input[name=quality]:checked');
-    var res=sel?sel.value:'original';
+    var res=$('downloadRes')?$('downloadRes').value:'original';
+    var fps=$('downloadFps')?$('downloadFps').value:'original';
     hideQualityModal();
+    var params=[];
+    if(res!=='original') params.push('res='+res);
+    if(fps!=='original') params.push('fps='+fps);
+    var qs=params.length>0?'?'+params.join('&'):'';
     var a=document.createElement('a');
-    a.href='/result/'+resultTaskId+(res!=='original'?'?res='+res:'');
+    a.href='/result/'+resultTaskId+qs;
     a.download='';
     a.style.display='none';
     document.body.appendChild(a);
@@ -964,12 +979,13 @@ $('renderBtn').addEventListener('click', ()=>{
 });
 
 $('uploadBtn').addEventListener('click', async ()=>{
-  const file=$('fileInput').files[0];if(!file)return alert('请选择视频');
+  const file=$('fileInput').files[0];if(!file)return alert('请选择视频');if(file.size>500*1024*1024){alert('上传失败：视频文件过大！请上传 500MB 以内的视频。');return;}
+  if(file.size>500*1024*1024){alert('上传失败：视频文件过大！请上传 500MB 以内的视频。');return;}
   const btn=$('uploadBtn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span>分析中...';
   const fd=new FormData();fd.append('file',file);
   try{
     const r=await fetch('/analyze',{method:'POST',body:fd});const d=await r.json();
-    if(d.error){$('uploadStatus').innerHTML=`<span style="color:#e94560">${d.error}</span>`;return;}
+    if(d.error){$('uploadStatus').innerHTML=`<span style="color:#e94560">${d.error}</span>`;alert(d.error);return;}
     taskId=d.task_id;$('previewImg').src=d.image_base64;
     const g=$('idCheckboxes');g.innerHTML='';
     d.available_ids.forEach(id=>{g.innerHTML+=`<div class="id-row"><label class="cb-label"><input type="checkbox" class="anon-cb" value="${id}" checked onchange="debounceUpdate()"> 人物${parseInt(id)+1}</label><input type="text" class="nick-input" placeholder="输入昵称..." maxlength="6" oninput="debounceUpdate()"></div>`;});

@@ -65,47 +65,55 @@ class DanceAnonymizerPipeline:
         if show_progress:
             print(f"[Pipeline] 追踪引擎: {engine_type}")
 
-        # ---- 步骤 1: 抽帧 ----
-        task_dir = os.path.join(os.path.dirname(output_path) or "data/output")
-        frames_dir = os.path.join(task_dir, "_frames")
-        if os.path.exists(frames_dir):
-            shutil.rmtree(frames_dir, ignore_errors=True)
-        os.makedirs(frames_dir, exist_ok=True)
-
+        # ---- 步骤 1: 获取首帧 + 抽帧(仅SAM2) ----
         if show_progress:
-            print("[Pipeline] 步骤 1/4: 抽帧到 JPEG...")
+            print("[Pipeline] 步骤 1/4: 读取视频...")
         if progress_callback:
             progress_callback({"step": 1, "step_name": "准备视频", "step_total": 4})
 
         cap = cv2.VideoCapture(input_path)
-        frame_idx = 0
-        try:
+        ret, first_frame = cap.read()
+        if not ret or first_frame is None:
+            cap.release()
+            raise RuntimeError("无法读取首帧")
+
+        frames_dir = None
+        actual_frames = total_frames
+        if max_frames is not None and max_frames < total_frames:
+            actual_frames = max_frames
+
+        if engine_type == "sam2":
+            task_dir = os.path.join(os.path.dirname(output_path) or "data/output")
+            frames_dir = os.path.join(task_dir, "_frames")
+            if os.path.exists(frames_dir):
+                shutil.rmtree(frames_dir, ignore_errors=True)
+            os.makedirs(frames_dir, exist_ok=True)
+            cv2.imwrite(os.path.join(frames_dir, "00000.jpg"),
+                        first_frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            frame_idx = 1
             while True:
-                if max_frames is not None and frame_idx >= max_frames:
-                    break
+                if max_frames is not None and frame_idx >= max_frames: break
                 ret, frame = cap.read()
-                if not ret:
-                    break
+                if not ret: break
                 cv2.imwrite(os.path.join(frames_dir, f"{frame_idx:05d}.jpg"),
                             frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
                 frame_idx += 1
-        finally:
             cap.release()
-
-        actual_frames = frame_idx
-        if show_progress:
-            print(f"[Pipeline]   抽帧: {actual_frames} 张 → {frames_dir}")
+            actual_frames = frame_idx
+            cap = None
+            if show_progress:
+                print(f"[Pipeline]   抽帧: {actual_frames} 张 → {frames_dir}")
+        else:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            cap.read()
+            if show_progress:
+                print(f"[Pipeline]   Cutie 流式处理, 共 {actual_frames} 帧")
 
         # ---- 步骤 2: 首帧检测 + 引擎初始化 ----
         if show_progress:
             print("[Pipeline] 步骤 2/4: 首帧检测 + 引擎初始化...")
         if progress_callback:
             progress_callback({"step": 2, "step_name": "分析人物", "step_total": 4})
-
-        first_frame_path = os.path.join(frames_dir, "00000.jpg")
-        first_frame = cv2.imread(first_frame_path)
-        if first_frame is None:
-            raise RuntimeError("无法读取首帧")
 
         # 使用预计算检测结果 (来自 /analyze, 已含 SAM2 精修 mask, 避免重复 YOLO)
         sam2_already_refined = False
@@ -135,6 +143,7 @@ class DanceAnonymizerPipeline:
         # 创建引擎
         engine = create_tracker(engine_type, model_path=engine_model,
                                  verbose=show_progress)
+        engine._max_input_dim = self.effect_config.get("max_input_dim", 960)
 
         if engine_type == "sam2":
             # SAM 2: 从帧目录初始化
@@ -157,34 +166,42 @@ class DanceAnonymizerPipeline:
             })
 
         tmp_video = output_path + ".tmp_video.mp4"
-        writer = cv2.VideoWriter(tmp_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-        if not writer.isOpened():
-            # macOS 上 OpenCV 默认构建可能缺少 mp4v 编码器，尝试 avc1 回退
-            writer = cv2.VideoWriter(tmp_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
-        if not writer.isOpened():
-            raise RuntimeError(
-                f"无法创建输出视频文件。请检查 OpenCV 编码器支持 (mp4v/avc1)。"
-                f"可尝试: pip install opencv-python-headless 或 conda install -c conda-forge opencv")
         smooth_history = {}
-        pbar = tqdm(total=actual_frames, desc=engine.step_name, unit="帧",
-                     disable=not show_progress)
-
         processed_count = 0
         start_time = time.time()
+        frame_skip = self.effect_config.get("frame_skip", 1)
 
+        writer = None
+        pbar = None
         try:
+            writer = cv2.VideoWriter(tmp_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+            if not writer.isOpened():
+                writer = cv2.VideoWriter(tmp_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
+            if not writer.isOpened():
+                raise RuntimeError(
+                    f"无法创建输出视频文件。请检查 OpenCV 编码器支持 (mp4v/avc1)。"
+                    f"可尝试: pip install opencv-python-headless 或 conda install -c conda-forge opencv")
+            pbar = tqdm(total=actual_frames, desc=engine.step_name, unit="帧",
+                         disable=not show_progress)
+
             for f_idx in range(actual_frames):
                 if cancel_event is not None and cancel_event.is_set():
                     tqdm.write("  [取消]") if show_progress else None
                     break
 
-                jpg_path = os.path.join(frames_dir, f"{f_idx:05d}.jpg")
-                frame = cv2.imread(jpg_path)
-                if frame is None:
-                    continue
+                if cap is not None:
+                    ret, frame = cap.read()
+                    if not ret: break
+                else:
+                    jpg_path = os.path.join(frames_dir, f"{f_idx:05d}.jpg")
+                    frame = cv2.imread(jpg_path)
+                    if frame is None: continue
 
-                # 引擎步进 (传副本防止原地修改)
-                track_results = engine.step(frame.copy(), f_idx)
+                # 跳帧: 隔帧复用上一帧 mask
+                if frame_skip > 0 and f_idx > 0 and f_idx % (frame_skip + 1) != 0:
+                    pass
+                else:
+                    track_results = engine.step(frame.copy(), f_idx)
 
                 if not track_results:
                     writer.write(frame)
@@ -218,8 +235,10 @@ class DanceAnonymizerPipeline:
                     })
 
         finally:
-            pbar.close()
-            writer.release()
+            if pbar is not None:
+                pbar.close()
+            if writer is not None:
+                writer.release()
 
         elapsed = time.time() - start_time
         if show_progress:
@@ -249,7 +268,7 @@ class DanceAnonymizerPipeline:
                 os.remove(tmp_video)
             except OSError:
                 pass
-        if os.path.exists(frames_dir):
+        if frames_dir and os.path.exists(frames_dir):
             shutil.rmtree(frames_dir, ignore_errors=True)
             if show_progress:
                 print(f"[Pipeline]   已清理: {frames_dir}")
