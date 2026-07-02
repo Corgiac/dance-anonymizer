@@ -173,8 +173,12 @@ def merge_audio_with_moviepy(
 
     # 对齐时长: 取较短的
     duration = min(video_clip.duration, audio_clip.duration)
-    video_clip = video_clip.subclip(0, duration)
-    audio_clip = audio_clip.subclip(0, duration)
+    try:
+        video_clip = video_clip.subclipped(0, duration)
+        audio_clip = audio_clip.subclipped(0, duration)
+    except AttributeError:
+        video_clip = video_clip.subclip(0, duration)
+        audio_clip = audio_clip.subclip(0, duration)
 
     try:
         final = video_clip.with_audio(audio_clip)
