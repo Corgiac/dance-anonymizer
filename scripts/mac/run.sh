@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 source .venv/bin/activate
 echo "========================================"
 echo "  舞蹈视频智能打码"
