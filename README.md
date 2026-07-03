@@ -8,9 +8,7 @@
 
 ---
 
-## 快速开始
-
-（如没有需先装 Python）
+## 运行脚本快速开始
 
 ### Mac
 
@@ -39,36 +37,15 @@ bash scripts/mac/run.sh
 
 ---
 
-## 第一步：安装 Python（已经装过的跳过）
-
-## 第二步：下载项目
-
-### 如果你有 Git
-
-```bash
-git clone https://github.com/Corgiac/dance-anonymizer.git
-cd dance-anonymizer
-```
-
-### 如果没用过 Git（更简单）
-
-1. 点绿色的 **Code** 按钮 → **Download ZIP**
-2. 解压到你喜欢的文件夹（比如桌面）
-3. 文件夹名字改成 `dance-anonymizer`
-
----
-
-## 第三步：一键安装
+## 第一步：一键安装
 
 ### Mac 用户
 
 打开「终端」，把下面三行一行一行复制进去，每行按回车：
 
 ```bash
-cd ~/Desktop/dance-anonymizer
+cd 文件夹路径
 ```
-
-> ? 如果文件夹不在桌面，把路径换成你的实际位置。拖拽文件夹到终端窗口可以自动填入路径。
 
 ```bash
 python3 -m venv .venv
@@ -83,10 +60,8 @@ pip install -r requirements.txt
 按 `Win+R`，输入 `cmd`，回车。在黑窗口里**一行一行**复制，每行按回车：
 
 ```bash
-cd C:\Users\你的用户名\Desktop\dance-anonymizer
+cd 文件夹路径
 ```
-
-> ? 把「你的用户名」换成你电脑的用户名。或者直接拖拽文件夹到黑窗口自动填入路径。
 
 ```bash
 python -m venv .venv
@@ -96,14 +71,14 @@ pip install -r requirements.txt
 
 ---
 
-## 第四步：启动
+## 第二步：启动
 
 **每次使用都要先做这一步**。
 
 ### Mac
 
 ```bash
-cd ~/Desktop/dance-anonymizer
+cd 文件夹路径
 source .venv/bin/activate
 uvicorn api:app --host 0.0.0.0 --port 8002
 ```
@@ -111,7 +86,7 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 ### Windows
 
 ```bash
-cd C:\Users\你的用户名\Desktop\dance-anonymizer
+cd 文件夹路径
 .venv\Scripts\activate
 uvicorn api:app --host 0.0.0.0 --port 8002
 ```
@@ -120,7 +95,7 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 
 ---
 
-## 第五步：打开网页
+## 第三步：打开网页
 
 浏览器地址栏输入：**`http://localhost:8002`**，回车。
 
@@ -139,6 +114,7 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 6. 完成后点「下载视频」
 
 ---
+## 可能遇到的问题
 
 ### ? 网页打不开 / 显示「无法连接」
 
