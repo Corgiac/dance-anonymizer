@@ -156,23 +156,11 @@ async def analyze(file: UploadFile = File(...)):
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
 
-        # 扫多帧选检测人数最多的作为首帧 (0%,25%,50%,75%)
-        from ultralytics import YOLO
-        scanner = YOLO("yolo11s-seg.pt")
-        best_frame, best_count, best_idx = None, 0, 0
-        for pct in [0, 0.25, 0.50, 0.75]:
-            pos = int(total_frames * pct)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
-            ret, frame = cap.read()
-            if not ret: continue
-            preds = scanner.predict(frame, classes=[0], conf=0.3, device=auto_device(), verbose=False)
-            n = len(preds[0].boxes) if preds[0].boxes is not None else 0
-            if n > best_count or (n == best_count and pct == 0):
-                best_count, best_frame, best_idx = n, frame.copy(), pos
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        ret, best_frame = cap.read()
         cap.release()
-        del scanner
 
-        if best_frame is None:
+        if not ret or best_frame is None:
             return JSONResponse({"error": "无法读取视频帧"}, 400)
         if fps <= 0: fps = 30.0
         if total_frames <= 0: return JSONResponse({"error": "视频文件损坏，无法读取帧信息！"}, 400)
