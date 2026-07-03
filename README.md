@@ -35,11 +35,9 @@ bash scripts/mac/run.sh
 
 跟着下面步骤走，**全程复制粘贴**，轻松搞定。
 
----
+### 第一步：一键安装
 
-## 第一步：一键安装
-
-### Mac 用户
+#### Mac 用户
 
 打开「终端」，把下面三行一行一行复制进去，每行按回车：
 
@@ -55,7 +53,7 @@ pip install -r requirements.txt
 
 看到 `Successfully installed ...` 就说明装好了。
 
-### Windows 用户
+#### Windows 用户
 
 按 `Win+R`，输入 `cmd`，回车。在黑窗口里**一行一行**复制，每行按回车：
 
@@ -71,11 +69,11 @@ pip install -r requirements.txt
 
 ---
 
-## 第二步：启动
+### 第二步：启动
 
 **每次使用都要先做这一步**。
 
-### Mac
+#### Mac
 
 ```bash
 cd 文件夹路径
@@ -83,7 +81,7 @@ source .venv/bin/activate
 uvicorn api:app --host 0.0.0.0 --port 8002
 ```
 
-### Windows
+#### Windows
 
 ```bash
 cd 文件夹路径
@@ -95,7 +93,7 @@ uvicorn api:app --host 0.0.0.0 --port 8002
 
 ---
 
-## 第三步：打开网页
+### 第三步：打开网页
 
 浏览器地址栏输入：**`http://localhost:8002`**，回车。
 
