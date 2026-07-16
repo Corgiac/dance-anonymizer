@@ -13,3 +13,6 @@ uploads/
 v5之后改动记录.md
 参数表*.xlsx
 debug_holes.py
+sam2_hiera_tiny.pt
+yolov8n-pose.pt
+yolo11s-seg.pt

@@ -141,14 +141,27 @@ class VideoWriter:
         self._writer.write(frame)
 
 
-def has_audio_stream(video_path: str) -> bool:
-    """检测视频是否包含音频流 (使用 moviepy)。"""
+def _get_ffmpeg():
+    """获取 ffmpeg 可执行文件路径 (优先系统安装版本，兼容性更好)。"""
+    import shutil
+    sys_ffmpeg = shutil.which("ffmpeg")
+    if sys_ffmpeg:
+        return sys_ffmpeg
     try:
-        from moviepy.video.io.VideoFileClip import VideoFileClip
-        clip = VideoFileClip(video_path)
-        has_audio = clip.audio is not None
-        clip.close()
-        return has_audio
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "ffmpeg"
+
+
+def has_audio_stream(video_path: str) -> bool:
+    """检测视频是否包含音频流 (使用 ffmpeg -i 输出解析)。"""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [_get_ffmpeg(), "-i", video_path],
+            capture_output=True, text=True, timeout=30)
+        return "Audio:" in result.stderr
     except Exception:
         return False
 
@@ -159,40 +172,22 @@ def merge_audio_with_moviepy(
     output_path: str
 ) -> str:
     """
-    使用 moviepy 将无声视频与原始音频合成为最终成品。
-
-    保证帧率和时长与原视频严格一致。
-
-    返回输出路径。
+    使用 ffmpeg 将无声视频与原始音频合成为最终成品。
     """
-    from moviepy.video.io.VideoFileClip import VideoFileClip
-    from moviepy.audio.io.AudioFileClip import AudioFileClip
-
-    video_clip = VideoFileClip(video_path)
-    audio_clip = AudioFileClip(audio_source_path)
-
-    # 对齐时长: 取较短的
-    duration = min(video_clip.duration, audio_clip.duration)
-    try:
-        video_clip = video_clip.subclipped(0, duration)
-        audio_clip = audio_clip.subclipped(0, duration)
-    except AttributeError:
-        video_clip = video_clip.subclip(0, duration)
-        audio_clip = audio_clip.subclip(0, duration)
-
-    try:
-        final = video_clip.with_audio(audio_clip)
-    except AttributeError:
-        final = video_clip.set_audio(audio_clip)
-    final.write_videofile(
-        output_path,
-        codec="libx264",
-        audio_codec="aac",
-        logger=None,
-    )
-    video_clip.close()
-    audio_clip.close()
-    final.close()
+    import subprocess
+    ffmpeg = _get_ffmpeg()
+    cmd = [
+        ffmpeg, "-y",
+        "-i", video_path,
+        "-i", audio_source_path,
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-shortest",
+        output_path
+    ]
+    subprocess.run(cmd, capture_output=True, timeout=300)
     return output_path
 
 

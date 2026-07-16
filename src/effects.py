@@ -53,7 +53,7 @@ def calculate_depth_order(
     smooth_history: Optional[dict] = None,
 ) -> Tuple[List[int], dict]:
     sorted_tracks = sorted(track_results, key=lambda t: t.foot_y)
-    return [t.track_id for t in sorted_tracks], (smooth_history or {})
+    return [t.track_id for t in sorted_tracks], (smooth_history if smooth_history is not None else {})
 
 
 # ================================================================
@@ -82,6 +82,135 @@ def _render_blur_fill(frame, alpha, blur_ksize=31):
     blurred = cv2.GaussianBlur(frame, (blur_ksize, blur_ksize), sigmaX=20)
     a = np.clip(alpha, 0, 1)[:, :, np.newaxis]
     return (frame.astype(np.float32) * (1 - a) + blurred.astype(np.float32) * a).astype(np.uint8)
+
+
+# ================================================================
+# 美白 — HSV 调色，人物区域内提明度降饱和度
+# ================================================================
+
+def apply_skin_whiten(frame, track_results, amount):
+    """amount 0-100, 在人物 mask 范围内美白"""
+    if amount <= 0:
+        return frame
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
+    factor = amount / 100.0
+    for tr in track_results:
+        mask = tr.mask
+        body = np.clip((mask - 0.10) / 0.10, 0.0, 1.0)
+        body = (body > 0.3).astype(np.float32)
+        hsv[:, :, 1] -= body * factor * 50   # 降饱和度
+        hsv[:, :, 2] += body * factor * 50   # 提明度
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
+    hsv[:, :, 2] = np.clip(hsv[:, :, 2], 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
+# ================================================================
+# 拉腿 — 竖直区域纵向拉伸
+# ================================================================
+
+def apply_leg_stretch(frame, zone_top, zone_bot, stretch_pct):
+    """zone_top/bot 为 0-1 比例, stretch_pct 为 0-100"""
+    if stretch_pct <= 0 or zone_top >= zone_bot:
+        return frame
+    h, w = frame.shape[:2]
+    zt = int(zone_top * h)
+    zb = int(zone_bot * h)
+    stretch = 1.0 + (stretch_pct / 100.0) * 0.5
+    zone_h = zb - zt
+    stretch_h = int(zone_h * stretch)
+    shift = stretch_h - zone_h
+    new_h = h + shift
+
+    map_y = np.zeros((new_h, w), dtype=np.float32)
+    map_x = np.tile(np.arange(w, dtype=np.float32), (new_h, 1))
+
+    feather = 4  # 边界羽化像素数
+    for y in range(new_h):
+        if y < zt - feather:
+            map_y[y, :] = y
+        elif y < zt + feather:
+            # 上边界羽化
+            t = (y - (zt - feather)) / (2 * feather)
+            t = t * t * (3 - 2 * t)  # smoothstep
+            orig_y = zt + (y - zt) / stretch
+            map_y[y, :] = y * (1 - t) + orig_y * t
+        elif y < zt + stretch_h - feather:
+            orig_y = zt + (y - zt) / stretch
+            map_y[y, :] = orig_y
+        elif y < zt + stretch_h + feather:
+            # 下边界羽化
+            t = (y - (zt + stretch_h - feather)) / (2 * feather)
+            t = t * t * (3 - 2 * t)  # smoothstep
+            orig_y = zt + (y - zt) / stretch
+            shifted_y = y - shift
+            map_y[y, :] = orig_y * (1 - t) + shifted_y * t
+        else:
+            map_y[y, :] = y - shift
+
+    return cv2.remap(frame, map_x, map_y, cv2.INTER_LINEAR,
+                     borderMode=cv2.BORDER_REPLICATE)
+
+
+# ================================================================
+# 面部打码 — 基于现有人物 mask
+# ================================================================
+
+
+def apply_face_blur(frame, track_results, face_blur_ids, sticker_img=None,
+                    sticker_scale=0.40, size_history=None):
+    """对指定人物面部贴纸叠加 — 保持贴纸原比例，可调节大小。size_history 用于平滑贴纸尺寸。"""
+    if not face_blur_ids or sticker_img is None:
+        return frame
+    result = frame.copy()
+    h, w = frame.shape[:2]
+    face_blur_set = set(face_blur_ids)
+    if size_history is None:
+        size_history = {}
+    for tr in track_results:
+        if tr.track_id not in face_blur_set:
+            continue
+        x1, y1, x2, y2 = tr.bbox
+        bw, bh = x2 - x1, y2 - y1
+        tid = tr.track_id
+        # 贴纸大小锁定：首帧算好 (w, h)，之后完全不变
+        if tid not in size_history:
+            first_w = int(bw * sticker_scale)
+            sh2, sw2 = sticker_img.shape[:2]
+            first_h = int(first_w * sh2 / sw2) if sw2 > 0 else first_w
+            size_history[tid] = (first_w, first_h)
+        sticker_w, sticker_h = size_history[tid]
+        # 面部中心：bbox 上方 12% 处，水平居中
+        face_cx = (x1 + x2) // 2
+        face_cy = y1 + int(bh * 0.12)
+        # 贴纸按原始大小叠加，超出画面边缘的部分自然裁掉
+        sticker_resized = cv2.resize(sticker_img, (sticker_w, sticker_h))
+        if sticker_resized.shape[2] == 4:
+            sticker_rgb_full = sticker_resized[:, :, :3]
+            sticker_a_full = (sticker_resized[:, :, 3:4].astype(np.float32) / 255.0)
+        else:
+            sticker_rgb_full = sticker_resized
+            sticker_a_full = np.ones((sticker_h, sticker_w, 1), dtype=np.float32)
+        # 计算贴纸在帧上的实际可见区域
+        sx1 = max(0, face_cx - sticker_w // 2)
+        sy1 = max(0, face_cy - sticker_h // 2)
+        sx2 = min(w, sx1 + sticker_w)
+        sy2 = min(h, sy1 + sticker_h)
+        if sx2 <= sx1 or sy2 <= sy1:
+            continue
+        # 贴纸被裁部分对应下标
+        dx1 = sx1 - (face_cx - sticker_w // 2)
+        dy1 = sy1 - (face_cy - sticker_h // 2)
+        dx2 = dx1 + (sx2 - sx1)
+        dy2 = dy1 + (sy2 - sy1)
+        sticker_rgb = sticker_rgb_full[dy1:dy2, dx1:dx2]
+        sticker_a = sticker_a_full[dy1:dy2, dx1:dx2]
+        roi = result[sy1:sy2, sx1:sx2]
+        result[sy1:sy2, sx1:sx2] = (
+            roi.astype(np.float32) * (1 - sticker_a) +
+            sticker_rgb.astype(np.float32) * sticker_a
+        ).astype(np.uint8)
+    return result
 
 
 # ================================================================
@@ -119,7 +248,9 @@ def apply_shadow_outline_effect(
         alpha_edge = (alpha > 0.5).astype(np.float32)
         edge = blend_edge(alpha_edge, edge_width=dilate_kernel_size)
 
-        if fill_mode == "blur":
+        if fill_mode == "none":
+            pass  # 只画白边，不填色
+        elif fill_mode == "blur":
             result = _render_blur_fill(result, body * opacity)
         elif fill_mode == "gradient":
             grad_layer = _render_gradient_fill(h, w, body * opacity, grad_top, grad_bot)
@@ -231,6 +362,9 @@ def process_frame_effects(
     fill_mode="solid", fill_color="#000000",
     border_color="#FFFFFF", opacity=1.0,
     labels_config=None, font_path=None, label_mode="custom_only",
+    face_blur_ids=None, sticker_img=None, sticker_scale=0.40,
+    skin_whiten=0, leg_stretch_on=False,
+    leg_stretch=0, leg_zone_top=0.5, leg_zone_bot=0.75,
 ):
     """
     对单帧应用特效 + 文字标签。
@@ -239,10 +373,30 @@ def process_frame_effects(
     # 保留完整 track_results 给标签绘制用
     all_track_results = track_results
 
+    # 美白：在所有人物区域调整 HSV
+    if skin_whiten > 0:
+        frame = apply_skin_whiten(frame, all_track_results, skin_whiten)
+
+    # 面部贴纸
+    if face_blur_ids:
+        frame = apply_face_blur(frame, all_track_results, face_blur_ids,
+                                sticker_img=sticker_img, sticker_scale=sticker_scale,
+                                size_history=smooth_history)
+
     # 打码仅作用于 target_ids
     if target_ids is not None:
         target_set = set(target_ids)
+        non_target_tracks = [tr for tr in track_results if tr.track_id not in target_set]
         track_results = [tr for tr in track_results if tr.track_id in target_set]
+
+        # 掩码相减：从 target mask 中扣除 non-target 重叠区域
+        if non_target_tracks and track_results:
+            h, w = track_results[0].mask.shape[:2]
+            exclusion = np.zeros((h, w), dtype=np.float32)
+            for nt in non_target_tracks:
+                exclusion = np.maximum(exclusion, nt.mask.astype(np.float32))
+            for tr in track_results:
+                tr.mask = (tr.mask.astype(np.float32) * (1.0 - exclusion)).astype(tr.mask.dtype)
 
     if track_results:
         ordered_ids, smooth_history = calculate_depth_order(
@@ -264,5 +418,9 @@ def process_frame_effects(
     # 文字标签 (在特效之上, 使用完整 track_results)
     result = draw_text_labels(result, all_track_results, labels_config,
                                font_path=font_path, label_mode=label_mode)
+
+    # 拉腿：最后一步，竖直区域拉伸（避免与其他效果维度冲突）
+    if leg_stretch_on and leg_stretch > 0:
+        result = apply_leg_stretch(result, leg_zone_top, leg_zone_bot, leg_stretch)
 
     return result, smooth_history

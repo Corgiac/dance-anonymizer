@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>智能打码工具</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#18181B;color:#F4F4F5;min-height:100vh;display:flex;justify-content:center;padding:20px}
+.container{max-width:460px;width:100%}
+.h1{text-align:center;font-size:48px;font-family:serif;margin:30px 0 4px;background:linear-gradient(90deg,#fff,#A78BFA,#7C3AED);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.sub{text-align:center;color:#A1A1AA;font-size:14px;margin-bottom:20px}
+.card{background:#27272A;border-radius:12px;padding:20px;margin-bottom:16px;border:1px solid #3F3F46}
+.card h2{font-size:15px;color:#A78BFA;font-weight:600;margin-bottom:12px}
+.step{display:inline-block;background:rgba(124,58,237,.15);color:#A78BFA;font-size:12px;padding:3px 10px;border-radius:10px;margin-bottom:10px}
+.btn{display:flex;align-items:center;justify-content:center;height:44px;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;border:none;width:100%;transition:opacity .2s}
+.btn-primary{background:#7C3AED;color:#fff}
+.btn-primary:disabled{opacity:.45;cursor:default}
+.btn-secondary{background:#3F3F46;color:#fff}
+.btn-outline{background:transparent;color:#A78BFA;border:2px dashed #A78BFA;height:140px;flex-direction:column;gap:8px;font-size:16px}
+.btn-outline svg{width:28px;height:28px}
+.btn-danger{background:#F97316;color:#fff}
+.btn-small{width:auto;display:inline-flex;padding:0 16px;font-size:13px;height:34px}
+.file-info{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#202022;border-radius:8px;margin-top:10px}
+.file-info span{font-size:13px;color:#A78BFA}
+#previewImg{width:100%;max-height:240px;object-fit:contain;border-radius:8px;background:#121214;border:1px solid #3F3F46}
+.person-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#202022;border-radius:8px;margin-bottom:8px}
+.person-row input[type=checkbox]{accent-color:#7C3AED;width:18px;height:18px}
+.person-row label{flex:1;color:#D4D4D8}
+.person-row input[type=text]{width:100px;height:34px;border-radius:6px;background:#323235;border:none;color:#fff;padding:0 10px;font-size:13px;text-align:center}
+.param-row{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#202022;border-radius:8px;margin-bottom:6px}
+.param-row label{color:#ccc;font-size:13px}
+.param-row select,.param-row input[type=number]{height:34px;border-radius:6px;background:#323235;border:none;color:#fff;padding:0 12px;font-size:13px;min-width:120px;text-align:center;text-align-last:center}
+.param-row input[type=number]{width:80px;text-align:center}
+.color-trigger{display:flex;align-items:center;justify-content:center;gap:8px;height:34px;background:#323235;border-radius:6px;padding:0 14px;cursor:pointer;min-width:120px}
+.color-swatch{width:20px;height:20px;border-radius:4px;border:1px solid #3F3F46}
+.color-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:0;overflow:hidden;transition:max-height .3s}
+.color-grid.open{max-height:300px;margin-bottom:8px}
+.color-cell{width:32px;height:32px;border-radius:4px;cursor:pointer;border:2px solid transparent}
+.color-cell.active{border-color:#A78BFA}
+.progress-card{background:#202022;border-radius:8px;padding:14px;border:1px solid #3F3F46;margin-top:12px}
+.progress-card .step{font-size:14px;color:#A78BFA;font-weight:700;margin-bottom:6px}
+.bar{height:8px;background:#3F3F46;border-radius:4px;overflow:hidden;margin:8px 0}
+.bar-fill{height:100%;background:#A78BFA;border-radius:4px;transition:width .3s}
+.info-row{display:flex;justify-content:space-between;font-size:11px;color:#A1A1AA}
+#resultPlayer{width:100%;border-radius:8px;background:#000;margin-bottom:12px}
+.error{color:#e94560;font-size:13px;margin-top:8px;text-align:center}
+.status{color:#A78BFA;font-size:13px;margin-top:6px;text-align:center}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(124,58,237,.3);border-top-color:#7C3AED;border-radius:50%;animation:spin .6s linear infinite;margin-right:6px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tabs{display:flex;gap:0;margin-bottom:12px;background:#202022;border-radius:8px;padding:3px}
+.tab{flex:1;text-align:center;padding:8px;font-size:13px;color:#A1A1AA;cursor:pointer;border-radius:6px;font-weight:600;transition:.2s}
+.tab.active{background:#7C3AED;color:#fff}
+.hidden{display:none!important}
+
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="h1">智能打码工具</div>
+  <div class="sub">AI自动检测人物·全身/面部打码·自动跟随·美白拉腿</div>
+
+  <!-- Step 1: 上传 -->
+  <div id="step1" class="card">
+    <div class="step">Step 1 — 选取视频</div>
+    <input type="file" id="fileInput" accept="video/*" style="display:none" onchange="onFilePicked(event)">
+    <button class="btn btn-outline" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      选取或拖拽视频到此处
+    </button>
+    <div id="fileInfo" class="file-info hidden"><span id="fileName"></span><span id="fileSize"></span></div>
+    <button id="btnGotoTrim" class="btn btn-primary hidden" style="margin-top:12px" onclick="gotoTrim()">下一步：裁剪视频</button>
+    <div id="uploadError" class="error hidden"></div>
+  </div>
+
+  <!-- Step 2: 裁剪时长 -->
+  <div id="step2" class="card hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div class="step">Step 2 — 裁剪时长</div>
+      <button class="btn btn-small btn-secondary" onclick="goBackToStep1()">返回</button>
+    </div>
+    <div style="background:rgba(167,139,250,.1);border-radius:12px;padding:10px 14px;margin-bottom:12px;text-align:center;color:#c4b5fd;font-size:13px;border:1px solid rgba(167,139,250,.25)">裁剪多余时长可以加快处理速度</div>
+    <video id="trimVideo" style="width:100%;background:#000;display:block;border-radius:8px" controls preload="auto" playsinline></video>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
+      <button class="btn btn-small btn-primary" id="playBtn" onclick="togglePlay()" style="width:40px;height:40px;border-radius:50%;padding:0;font-size:18px">▶</button>
+      <div style="flex:1;height:60px;position:relative;cursor:pointer;padding:0 14px">
+      <div id="trimmerTrack" style="height:60px;position:relative">
+        <div style="position:absolute;top:27px;left:0;right:0;height:6px;background:#333;border-radius:3px"></div>
+        <div id="trackFill" style="position:absolute;top:27px;height:6px;background:#A78BFA;border-radius:3px;left:0;width:100%"></div>
+        <div id="trackDimL" style="position:absolute;top:27px;height:6px;background:rgba(255,255,255,.08);border-radius:3px;left:0;width:0%"></div>
+        <div id="trackDimR" style="position:absolute;top:27px;height:6px;background:rgba(255,255,255,.08);border-radius:3px;right:0;width:0%"></div>
+        <div id="trimBadge" style="position:absolute;top:4px;background:rgba(0,0,0,.8);color:#fff;font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;left:50%;transform:translateX(-50%)">0:00</div>
+        <div id="knobLeft" class="trim-knob" style="position:absolute;top:16px;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4);z-index:10;left:0;cursor:ew-resize" onmousedown="knobStart('left',event)" ontouchstart="knobStart('left',event)"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;background:#A78BFA"></div></div>
+        <div id="knobRight" class="trim-knob" style="position:absolute;top:16px;width:28px;height:28px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.4);z-index:10;right:0;cursor:ew-resize" onmousedown="knobStart('right',event)" ontouchstart="knobStart('right',event)"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;background:#A78BFA"></div></div>
+      </div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;color:#A1A1AA;margin-bottom:12px"><span id="trimStartLabel">0:00</span><span id="trimEndLabel">0:00</span></div>
+    <button id="btnAnalyze" class="btn btn-primary" onclick="startAnalyze()">上传并分析</button>
+    <div id="analyzeStatus" class="status hidden"><span class="spinner"></span>分析中...</div>
+  </div>
+
+  <!-- Step 3: 配置 -->
+  <div id="step3" class="card hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div class="step">Step 3 — 打码配置</div>
+      <button class="btn btn-small btn-secondary" onclick="goBack()">返回</button>
+    </div>
+    <div id="previewWrap" style="position:sticky;top:0;z-index:10;background:#18181B;padding-bottom:8px;line-height:0">
+      <img id="previewImg" src="" alt="预览">
+      <div id="legOverlay" style="display:none;position:absolute;left:0;right:0;pointer-events:none"></div>
+    </div>
+    <div id="faceModeRow" style="margin-top:12px;display:none;align-items:center;gap:8px">
+      <span style="font-size:13px;color:#A1A1AA">面部贴纸</span>
+      <input type="file" id="stickerInput" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="onStickerPicked(event)">
+      <button class="btn btn-small btn-secondary" onclick="document.getElementById('stickerInput').click()">自定义</button>
+      <span id="stickerLabel" style="font-size:12px;color:#A78BFA;display:none"></span>
+      <button id="btnClearSticker" class="btn btn-small btn-secondary" style="display:none" onclick="clearSticker()">✕</button>
+      <span style="font-size:12px;color:#A1A1AA;margin-left:4px">大小</span>
+      <input type="range" id="stickerScale" min="20" max="80" value="40" style="width:60px" oninput="document.getElementById('stickerScaleVal').textContent=this.value+'%';onParamChange()">
+      <span id="stickerScaleVal" style="font-size:12px;color:#A78BFA">40%</span>
+    </div>
+    <div id="personList" style="margin-top:12px"></div>
+    <div style="margin-top:12px">
+      <div class="param-row"><label>填充模式</label><select id="fillMode" onchange="updateFillColorRow();onParamChange()"><option value="solid">纯色</option><option value="gradient">渐变</option><option value="blur" selected>模糊</option></select></div>
+      <div class="param-row"><label>边线宽度</label><input type="number" id="thickness" value="3" min="0" max="20" onchange="onParamChange()"></div>
+      <div id="fillColorRow" style="display:none"><div class="param-row"><label>填充色</label><div class="color-trigger" onclick="toggleColor('fillColor')"><div class="color-swatch" id="fillColorSwatch" style="background:#000"></div><span id="fillColorHex">#000000</span></div></div>
+      <div id="fillColorGrid" class="color-grid"></div></div>
+      <div class="param-row"><label>边框色</label><div class="color-trigger" onclick="toggleColor('borderColor')"><div class="color-swatch" id="borderColorSwatch" style="background:#555555"></div><span id="borderColorHex">#555555</span></div></div>
+      <div id="borderColorGrid" class="color-grid"></div>
+      <div class="param-row"><label>透明度</label><input type="range" id="opacity" min="20" max="100" value="100" oninput="onParamChange()"><span id="opacityVal">100%</span></div>
+      <div class="param-row"><label>美白</label><input type="range" id="skinWhiten" min="0" max="100" value="0" oninput="document.getElementById('skinWhitenVal').textContent=this.value+'%';onParamChange()"><span id="skinWhitenVal">0%</span></div>
+    </div>
+    <div style="padding:8px 10px;background:#202022;border-radius:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="color:#ccc;font-size:13px">拉腿</span>
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#A1A1AA;cursor:pointer"><input type="checkbox" id="legStretchOn" onchange="toggleLegStretch()"><span>启用</span></label>
+      </div>
+      <div id="legStretchCtrls" style="display:none;margin-top:10px;padding:10px 12px;background:#202022;border-radius:8px;border:1px solid rgba(167,139,250,.2);box-shadow:0 0 6px rgba(124,58,237,.10)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:0 8px;margin-bottom:8px"><span style="color:#ccc;font-size:13px">程度</span><input type="range" id="legStretch" min="0" max="100" value="30" style="width:120px;margin:0 auto" oninput="document.getElementById('legStretchVal').textContent=this.value+'%';onParamChange()"><span id="legStretchVal" style="font-size:13px;color:#D4D4D8;min-width:32px;text-align:right">30%</span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:0 8px;margin-bottom:8px"><span style="color:#ccc;font-size:13px">上沿</span><input type="range" id="legZoneTop" min="30" max="70" value="50" style="width:120px;margin:0 auto" oninput="document.getElementById('legZoneTopVal').textContent=this.value+'%';updateLegOverlay();onParamChange()"><span id="legZoneTopVal" style="font-size:13px;color:#D4D4D8;min-width:32px;text-align:right">50%</span></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:0 8px"><span style="color:#ccc;font-size:13px">下沿</span><input type="range" id="legZoneBot" min="50" max="95" value="75" style="width:120px;margin:0 auto" oninput="document.getElementById('legZoneBotVal').textContent=this.value+'%';updateLegOverlay();onParamChange()"><span id="legZoneBotVal" style="font-size:13px;color:#D4D4D8;min-width:32px;text-align:right">75%</span></div>
+      </div>
+    </div>
+    <button id="btnRender" class="btn btn-primary" style="margin-top:14px" onclick="handleRenderClick()">生成完整视频</button>
+    <div id="progressCard" class="progress-card hidden">
+      <div class="step" id="progressStep">准备中</div>
+      <div class="bar"><div class="bar-fill" id="progressBar" style="width:0%"></div></div>
+      <div class="info-row"><span id="progressPct">0%</span><span id="progressEta"></span></div>
+    </div>
+    <div id="renderStatus" class="status hidden"></div>
+  </div>
+
+  <!-- Step 4: 结果 & 裁剪 -->
+  <div id="step4" class="card hidden">
+    <div class="step">Step 4 — 处理完成</div>
+    <div style="display:flex;justify-content:center;gap:8px;margin-bottom:10px">
+      <button class="btn btn-small btn-secondary step4-crop-btn" onclick="setResultCrop('off',event)">原始</button>
+      <button class="btn btn-small btn-secondary step4-crop-btn" onclick="setResultCrop('1:1',event)">1:1</button>
+      <button class="btn btn-small btn-secondary step4-crop-btn" onclick="setResultCrop('4:3',event)">4:3</button>
+      <button class="btn btn-small btn-secondary step4-crop-btn" onclick="setResultCrop('16:9',event)">16:9</button>
+      <button class="btn btn-small btn-secondary step4-crop-btn" onclick="setResultCrop('9:16',event)">9:16</button>
+    </div>
+    <div id="resultCropWrap" style="position:relative;line-height:0;margin-bottom:10px">
+      <video id="resultPlayer" style="width:100%;border-radius:8px;background:#000" controls></video>
+      <div id="resultCropOverlay" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none"></div>
+    </div>
+    <div id="cropStatus" class="status hidden" style="margin-top:6px"></div>
+    <button class="btn btn-primary" style="margin-top:8px" id="btnDownload" onclick="downloadResult()">保存视频</button>
+    <button class="btn btn-secondary" style="margin-top:8px" onclick="resetAll()">处理新视频</button>
+  </div>
+</div>
+
+
+<script>
+const COLORS = ['#000000','#333333','#555555','#777777','#999999','#BBBBBB','#DDDDDD','#FFFFFF','#FF0000','#E74C3C','#FF6600','#F39C12','#FFCC00','#F1C40F','#00CC00','#2ECC71','#00CED1','#1ABC9C','#0066FF','#3498DB','#6600CC','#8E44AD','#FF1493','#E91E63','#7C3AED','#A78BFA','#6366F1','#8B5CF6','#1E1E2E','#F97316','#121214','#27272A'];
+let taskId = '', persons = [], fillColor='#000000', borderColor='#555555', stickerData='';
+let videoDuration=0, trimStart=0, trimEnd=0;
+let resultCropMode='off', resultCropOffset=0;
+
+// Init
+(async()=>{
+
+  ['fillColor','borderColor'].forEach(k=>{
+    const grid=document.getElementById(k+'Grid');
+    COLORS.forEach(c=>{const d=document.createElement('div');d.className='color-cell';d.style.background=c;d.onclick=()=>{if(k==='fillColor')fillColor=c;else borderColor=c;updateColorUI(k);onParamChange()};grid.appendChild(d)})
+  });
+  updateColorUI('fillColor');updateColorUI('borderColor');
+// Drag & drop
+  const dz=document.getElementById('dropZone');
+  dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='#A78BFA';dz.style.background='rgba(124,58,237,.1)'});
+  dz.addEventListener('dragleave',()=>{dz.style.borderColor='#A78BFA';dz.style.background='transparent'});
+  dz.addEventListener('drop',e=>{
+    e.preventDefault();dz.style.borderColor='#A78BFA';dz.style.background='transparent';
+    const f=e.dataTransfer.files[0];if(!f||!f.type.startsWith('video/')){alert('请拖入视频文件');return}
+    const input=document.getElementById('fileInput');
+    const dt=new DataTransfer();dt.items.add(f);input.files=dt.files;
+    input.dispatchEvent(new Event('change'));
+  });
+})();
+
+function updateColorUI(k){
+  const v=k==='fillColor'?fillColor:borderColor;
+  document.getElementById(k+'Swatch').style.background=v;
+  document.getElementById(k+'Hex').textContent=v;
+  document.querySelectorAll('#'+k+'Grid .color-cell').forEach(c=>c.classList.toggle('active',c.style.background.replace(/ /g,'')===v));
+}
+
+function toggleColor(k){document.getElementById(k+'Grid').classList.toggle('open')}
+function updateFillColorRow(){
+  const m=document.getElementById('fillMode').value;
+  document.getElementById('fillColorRow').style.display=(m==='blur')?'none':'';
+}
+updateFillColorRow();
+
+// ── Step 1: File ──
+function onFilePicked(e){
+  const f=e.target.files[0];if(!f)return;
+  if(f.size>500*1024*1024){alert('文件过大');return}
+  document.getElementById('fileName').textContent=f.name;
+  document.getElementById('fileSize').textContent=(f.size/1024/1024).toFixed(1)+' MB';
+  document.getElementById('fileInfo').classList.remove('hidden');
+  document.getElementById('btnGotoTrim').classList.remove('hidden');
+}
+
+function gotoTrim(){
+  const f=document.getElementById('fileInput').files[0];if(!f)return;
+  const url=URL.createObjectURL(f);
+  document.getElementById('step1').classList.add('hidden');
+  document.getElementById('step2').classList.remove('hidden');
+  const v=document.getElementById('trimVideo');v.src=url;v.load();
+  v.ontimeupdate=()=>{if(v.currentTime>=trimEnd){v.pause();document.getElementById('playBtn').textContent='▶'}};
+  v.onpause=()=>{document.getElementById('playBtn').textContent='▶'};
+  v.onloadedmetadata=()=>{
+    videoDuration=v.duration;
+    trimStart=0;trimEnd=videoDuration;
+    updateTrimLabels();updateTrimUI();
+    v.play().then(()=>v.pause()).catch(()=>{});
+  };
+}
+
+function goBackToStep1(){document.getElementById('step2').classList.add('hidden');document.getElementById('step1').classList.remove('hidden')}
+function togglePlay(){
+  const v=document.getElementById('trimVideo'),btn=document.getElementById('playBtn');
+  if(v.paused){v.currentTime=trimStart;v.play();btn.textContent='⏸'}else{v.pause();btn.textContent='▶'}
+}
+
+// ── Step 4: 裁剪比例 ──
+function setResultCrop(m,e){resultCropMode=m;resultCropOffset=0;
+  document.querySelectorAll('.step4-crop-btn').forEach(b=>{b.style.background='';b.style.borderColor=''});
+  e.target.style.background='rgba(124,58,237,.2)';
+  e.target.style.borderColor='#A78BFA';
+  const overlay=document.getElementById('resultCropOverlay');
+  const wrap=document.getElementById('resultCropWrap');
+  overlay.style.display='none';wrap.style.border='none';
+  if(m==='off')return;
+  wrap.style.border='4px solid rgba(167,139,250,.4)';
+  overlay.style.display='';
+  drawResultCropOverlay();
+}
+function drawResultCropOverlay(){
+  if(resultCropMode==='off')return;
+  const wrap=document.getElementById('resultCropWrap');
+  const overlay=document.getElementById('resultCropOverlay');
+  overlay.innerHTML='';
+  const W=wrap.offsetWidth, H=wrap.offsetHeight;
+  if(H===0)return;
+  const r=resultCropMode==='1:1'?1:resultCropMode==='4:3'?4/3:resultCropMode==='9:16'?9/16:16/9;
+  const mkBar=style=>{const d=document.createElement('div');d.style.cssText=style;overlay.appendChild(d)};
+  if(r>W/H){const cropH=W/r,margin=(H-cropH)/2,shift=margin*resultCropOffset;mkBar(`position:absolute;background:rgba(167,139,250,.25);left:0;right:0;top:0;height:${margin+shift}px`);mkBar(`position:absolute;background:rgba(167,139,250,.25);left:0;right:0;bottom:0;height:${margin-shift}px`)}
+  else{const cropW=H*r,margin=(W-cropW)/2,shift=margin*resultCropOffset;mkBar(`position:absolute;background:rgba(167,139,250,.25);top:0;bottom:0;left:0;width:${margin+shift}px`);mkBar(`position:absolute;background:rgba(167,139,250,.25);top:0;bottom:0;right:0;width:${margin-shift}px`)}
+}
+
+let dragKnob=null;
+function knobStart(side,e){e.stopPropagation();dragKnob=side;document.body.style.userSelect='none'}
+function onDocMove(e){
+  if(!dragKnob)return;
+  const track=document.getElementById('trimmerTrack');const rect=track.getBoundingClientRect();
+  const px=e.touches?e.touches[0].clientX:e.clientX;
+  const x=(px-rect.left)/rect.width;const t=x*videoDuration;
+  if(dragKnob==='left')trimStart=Math.max(0,Math.min(t,trimEnd-1));
+  else trimEnd=Math.min(videoDuration,Math.max(t,trimStart+1));
+  updateTrimUI();
+}
+function onDocUp(){if(dragKnob){const v=document.getElementById('trimVideo');v.currentTime=dragKnob==='left'?trimStart:trimEnd};dragKnob=null;document.body.style.userSelect=''}
+document.addEventListener('mousemove',onDocMove);document.addEventListener('mouseup',onDocUp);
+document.addEventListener('touchmove',onDocMove);document.addEventListener('touchend',onDocUp);
+function startRatio(){return videoDuration>0?trimStart/videoDuration:0}
+function endRatio(){return videoDuration>0?trimEnd/videoDuration:1}
+function updateTrimUI(){
+  const s=startRatio(),e=endRatio();
+  document.getElementById('trackFill').style.left=(s*100)+'%';document.getElementById('trackFill').style.width=((e-s)*100)+'%';
+  document.getElementById('trackDimL').style.width=(s*100)+'%';
+  document.getElementById('trackDimR').style.width=((1-e)*100)+'%';
+  const trackW=document.getElementById('trimmerTrack').offsetWidth;
+  document.getElementById('knobLeft').style.left=(s*trackW-14)+'px';
+  document.getElementById('knobRight').style.left=(e*trackW-14)+'px';
+  document.getElementById('trimBadge').style.left=(s+e)/2*100+'%';
+  document.getElementById('trimBadge').textContent=fmtTime(trimEnd-trimStart);
+  updateTrimLabels();
+}
+
+function fmtTime(s){const m=Math.floor(s/60),sec=Math.floor(s%60);return m+':'+String(sec).padStart(2,'0')}
+function updateTrimLabels(){
+  document.getElementById('trimStartLabel').textContent=fmtTime(trimStart);
+  document.getElementById('trimEndLabel').textContent=fmtTime(trimEnd);
+}
+
+async function startAnalyze(){
+  const f=document.getElementById('fileInput').files[0];if(!f)return;
+  const v=document.getElementById('trimVideo');v.pause();v.currentTime=0;
+  document.getElementById('btnAnalyze').disabled=true;
+  document.getElementById('analyzeStatus').classList.remove('hidden');
+  document.getElementById('uploadError').classList.add('hidden');
+  try{
+    const fd=new FormData();fd.append('file',f);
+    if(trimStart>0||trimEnd<videoDuration){fd.append('trim_start',trimStart.toFixed(2));fd.append('trim_end',trimEnd.toFixed(2))}
+    const r=await fetch('/analyze',{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||d.detail);
+    taskId=d.task_id;
+    // persons
+    persons=d.available_ids.map(id=>({id,checked:true,nick:'',faceBlur:false}));
+    document.getElementById('previewImg').src=d.image_base64;
+    document.getElementById('previewImg').onload=()=>{updateLegOverlay();onParamChange();};
+    renderPersonList();
+    document.getElementById('step2').classList.add('hidden');
+    document.getElementById('step3').classList.remove('hidden');
+  }catch(e){document.getElementById('uploadError').textContent=e.message;document.getElementById('uploadError').classList.remove('hidden')}
+  finally{document.getElementById('btnAnalyze').disabled=false;document.getElementById('analyzeStatus').classList.add('hidden')}
+}
+
+function renderPersonList(){
+  const el=document.getElementById('personList');el.innerHTML='';
+  persons.forEach((p,i)=>{
+    const d=document.createElement('div');d.className='person-row';
+    d.innerHTML=`<input type="checkbox" ${p.checked?'checked':''} onchange="togglePerson(${i})"><label>人物${i+1}</label>${p.checked?'':`<button class="btn btn-small ${p.faceBlur?'btn-primary':'btn-secondary'} face-blur-btn" onclick="toggleFaceBlur(${i})">面部</button>`}<input type="text" placeholder="昵称" value="${p.nick}" onchange="changeNick(${i},this.value)"><button class="btn btn-small btn-secondary follow-toggle" onclick="toggleFollowBtn(${i})">跟随</button>`;
+    el.appendChild(d);
+  });
+}
+function toggleFollowBtn(i){
+  followId=followId===i?-1:i;
+  const btns=document.querySelectorAll('.follow-toggle');
+  for(let j=0;j<btns.length;j++){
+    btns[j].className='btn btn-small '+(j===followId?'btn-primary':'btn-secondary')+' follow-toggle';
+  }
+}
+
+function togglePerson(i){persons[i].checked=!persons[i].checked;persons[i].faceBlur=false;renderPersonList();updateFaceModeRow();onParamChange()}
+function changeNick(i,v){persons[i].nick=v;onParamChange()}
+function toggleFaceBlur(i){persons[i].faceBlur=!persons[i].faceBlur;renderPersonList();updateFaceModeRow();onParamChange()}
+function updateFaceModeRow(){
+  const anyFace=persons.some(p=>p.faceBlur);
+  document.getElementById('faceModeRow').style.display=anyFace?'flex':'none';
+}
+function clearSticker(){stickerData='';const lbl=document.getElementById('stickerLabel');lbl.textContent='';lbl.style.display='none';document.getElementById('btnClearSticker').style.display='none';document.getElementById('stickerInput').value='';onParamChange()}
+function toggleLegStretch(){
+  document.getElementById('legStretchCtrls').style.display=document.getElementById('legStretchOn').checked?'block':'none';
+  updateLegOverlay();onParamChange();
+}
+function updateLegOverlay(){
+  const ov=document.getElementById('legOverlay');
+  if(!document.getElementById('legStretchOn').checked){ov.style.display='none';return}
+  ov.style.display='';
+  const wrap=document.getElementById('previewWrap'), img=document.getElementById('previewImg');
+  if(img.naturalWidth===0)return;
+  const iw=img.offsetWidth, ih=img.offsetHeight;
+  const topPct=parseInt(document.getElementById('legZoneTop').value)/100;
+  const botPct=parseInt(document.getElementById('legZoneBot').value)/100;
+  ov.style.top=(ih*topPct)+'px';ov.style.height=(ih*(botPct-topPct))+'px';
+  ov.style.width=iw+'px';
+  ov.style.background='rgba(167,139,250,.2)';
+  ov.style.borderTop='2px solid rgba(167,139,250,.6)';
+  ov.style.borderBottom='2px solid rgba(167,139,250,.6)';
+}
+function onStickerPicked(e){
+  const f=e.target.files[0];if(!f)return;
+  if(f.size>2*1024*1024){alert('贴纸图片不能超过2MB');return}
+  const reader=new FileReader();
+  reader.onload=()=>{stickerData=reader.result;const lbl=document.getElementById('stickerLabel');lbl.textContent=f.name;lbl.style.display='';document.getElementById('btnClearSticker').style.display='';onParamChange()};
+  reader.readAsDataURL(f);
+}
+
+// ── Preview ──
+let debounceTimer;
+function onParamChange(){
+  document.getElementById('opacityVal').textContent=document.getElementById('opacity').value+'%';
+  clearTimeout(debounceTimer);
+  debounceTimer=setTimeout(refreshPreview,300);
+}
+
+async function refreshPreview(){
+  if(!taskId)return;
+  const params=buildParams();
+  try{
+    const fd=new URLSearchParams({task_id:taskId,...params});
+    const r=await fetch('/preview_frame',{method:'POST',body:fd,headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+    const d=await r.json();
+    if(d.image_base64)document.getElementById('previewImg').src=d.image_base64;
+  }catch(e){}
+}
+
+function buildParams(){
+  const checkedIds=persons.filter(p=>p.checked).map(p=>p.id).join(',');
+  const faceIds=persons.filter(p=>p.faceBlur).map(p=>p.id).join(',');
+  const labels={};persons.forEach(p=>{if(p.nick)labels[p.id]={text:p.nick}});
+  return {
+    target_ids:checkedIds,
+    face_blur_ids:faceIds,
+    face_mode:'sticker',
+    sticker_data:stickerData,
+    sticker_scale:parseInt(document.getElementById('stickerScale').value)/100,
+    skin_whiten:parseInt(document.getElementById('skinWhiten').value),
+    leg_stretch_on:document.getElementById('legStretchOn').checked,
+    leg_stretch:parseInt(document.getElementById('legStretch').value),
+    leg_zone_top:parseInt(document.getElementById('legZoneTop').value)/100,
+    leg_zone_bot:parseInt(document.getElementById('legZoneBot').value)/100,
+    labels_config:Object.keys(labels).length?JSON.stringify(labels):'',
+    fill_mode:document.getElementById('fillMode').value,
+    fill_color:fillColor,
+    border_color:borderColor,
+    thickness:Math.max(0,Math.min(20,parseInt(document.getElementById('thickness').value)||3)),
+    opacity:parseInt(document.getElementById('opacity').value)/100
+  };
+}
+
+// ── Render ──
+let renderRunning=false,renderInterval=null;
+function handleRenderClick(){
+  if(renderRunning){
+    if(confirm('确定要取消当前任务吗？')) cancelRender();
+    return;
+  }
+  startRender();
+}
+async function cancelRender(){
+  document.getElementById('btnRender').textContent='生成完整视频';
+  document.getElementById('btnRender').className='btn btn-primary';
+  document.getElementById('btnRender').disabled=false;
+  document.getElementById('progressCard').classList.add('hidden');
+  renderRunning=false;
+  if(renderInterval){clearInterval(renderInterval);renderInterval=null}
+  try{await fetch(`/cancel/${encodeURIComponent(taskId)}`,{method:'POST'})}catch(e){}
+}
+async function startRender(){
+  renderRunning=true;
+  document.getElementById('btnRender').textContent='取消';
+  document.getElementById('btnRender').className='btn btn-danger';
+  const params=buildParams();
+  document.getElementById('progressCard').classList.remove('hidden');
+  try{
+    const fd=new URLSearchParams({task_id:taskId,follow_id:String(followId??-1),...params});
+    const r=await fetch('/render',{method:'POST',body:fd,headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+    const d=await r.json();
+    if(d.status==='started')pollProgress();
+    else if(d.error)alert(d.error);
+  }catch(e){alert('网络错误')}
+}
+
+function pollProgress(){
+  renderInterval=setInterval(async()=>{
+    try{
+      const r=await fetch(`/status/${taskId}`);const p=await r.json();
+      const pct=p.frames_total>0?Math.round(p.frames_done/p.frames_total*100):30;
+      document.getElementById('progressBar').style.width=pct+'%';
+      document.getElementById('progressPct').textContent=pct+'%';
+      document.getElementById('progressStep').textContent=(['准备中','分析人物','智能处理','生成视频'][p.step-1]||'处理中')+` · ${p.step}/${p.step_total}`;
+      document.getElementById('progressEta').textContent=p.eta>0?'⏱ '+fmtTime(p.eta):'';
+      if(p.done){
+        clearInterval(renderInterval);renderInterval=null;renderRunning=false;
+        document.getElementById('btnRender').textContent='生成完整视频';
+        document.getElementById('btnRender').className='btn btn-primary';
+        document.getElementById('progressCard').classList.add('hidden');
+        document.getElementById('step3').classList.add('hidden');
+        document.getElementById('step4').classList.remove('hidden');
+        document.getElementById('resultPlayer').src=`/result/${taskId}?t=${Date.now()}`;
+      }
+      if(p.error){clearInterval(renderInterval);renderInterval=null;renderRunning=false;document.getElementById('btnRender').textContent='生成完整视频';document.getElementById('btnRender').className='btn btn-primary';alert('处理失败: '+p.error)}
+    }catch(e){}
+  },1000);
+}
+
+async function downloadResult(){
+  let url=`/result/${taskId}`;
+  if(resultCropMode!=='off'){
+    document.getElementById('cropStatus').classList.remove('hidden');
+    document.getElementById('cropStatus').innerHTML='<span class="spinner"></span>裁剪中...';
+    try{
+      const fd=new URLSearchParams({crop_mode:resultCropMode,crop_offset:resultCropOffset.toFixed(3)});
+      const r=await fetch(`/crop_result/${encodeURIComponent(taskId)}`,{method:'POST',body:fd,headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+      const d=await r.json();
+      if(d.ok){url=`/result/${taskId}?cropped=1`}
+      else{document.getElementById('cropStatus').innerHTML=`<span style="color:#e94560">${d.error}</span>`;return}
+    }catch(e){document.getElementById('cropStatus').innerHTML=`<span style="color:#e94560">${e.message}</span>`;return}
+    document.getElementById('cropStatus').classList.add('hidden');
+  }
+  const a=document.createElement('a');a.href=url;a.download='dance_anonymized.mp4';a.click()
+}
+function goBack(){const v=document.getElementById('resultPlayer');v.pause();v.src='';fetch(`/cleanup/${taskId}`,{method:'DELETE'}).catch(()=>{});document.getElementById('step3').classList.add('hidden');document.getElementById('step2').classList.remove('hidden')}
+let followId=-1;
+
+function resetAll(){const v=document.getElementById('resultPlayer');v.pause();v.src='';location.reload()}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){const v=document.getElementById('resultPlayer');if(v)v.pause()}});
+</script>
+</body>
+</html>

@@ -1,11 +1,11 @@
 @echo off
 cd /d "%~dp0..\.."
 echo ========================================
-echo   Dance Anonymizer - Setup (Windows)
+echo   DanceAnon - Setup (Windows)
 echo ========================================
 echo.
 
-echo [1/4] Checking Python...
+echo [1/3] Checking Python...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo.
@@ -19,23 +19,14 @@ if %errorlevel% neq 0 (
 python --version
 echo.
 
-echo [2/4] Creating virtual environment...
+echo [2/3] Creating virtual environment...
 if not exist ".venv" (
     python -m venv .venv
 )
 call .venv\Scripts\activate.bat
 echo.
 
-echo [3/4] Merging model files...
-if not exist "sam2_hiera_tiny.pt" (
-    if exist "sam2_hiera_tiny.pt.part_aa" (
-        copy /b sam2_hiera_tiny.pt.part_aa + sam2_hiera_tiny.pt.part_ab sam2_hiera_tiny.pt
-        echo Model merged successfully
-    )
-)
-echo.
-
-echo [4/4] Installing Python packages (may take a few minutes)...
+echo [3/3] Installing Python packages (may take a few minutes)...
 pip install -r requirements.txt -q
 echo.
 
@@ -44,5 +35,8 @@ echo   Setup complete!
 echo.
 echo   To start: double-click run.bat
 echo   Then open http://localhost:8002
+echo.
+echo   Optional: install ffmpeg for audio support
+echo   (download from https://ffmpeg.org)
 echo ========================================
 pause

@@ -88,9 +88,20 @@ async def cleanup(task_id: str):
 #  渲染辅助
 # ================================================================
 
-def _render_one_frame(frame, track_results, target_ids, params, labels_config=None):
+def _render_one_frame(frame, track_results, target_ids, params, labels_config=None, face_blur_ids=None, sticker_img=None, sticker_scale=0.40):
     """预览模式: 打码仅 target_ids, 标签覆盖所有人(自定义昵称或默认ID)。"""
     all_track_results = track_results
+
+    # 美白
+    if params.get("skin_whiten", 0) > 0:
+        from src.effects import apply_skin_whiten
+        frame = apply_skin_whiten(frame, all_track_results, params["skin_whiten"])
+
+    # 面部贴纸
+    if face_blur_ids:
+        from src.effects import apply_face_blur
+        frame = apply_face_blur(frame, all_track_results, face_blur_ids,
+                                sticker_img=sticker_img, sticker_scale=sticker_scale)
 
     if target_ids:
         anonymize = [t for t in track_results if t.track_id in set(target_ids)]
@@ -113,12 +124,45 @@ def _render_one_frame(frame, track_results, target_ids, params, labels_config=No
         result = frame.copy()
 
     result = draw_text_labels(result, all_track_results, labels_config, label_mode="all")
+
+    # 拉腿：最后一步
+    if params.get("leg_stretch_on") and params.get("leg_stretch", 0) > 0:
+        from src.effects import apply_leg_stretch
+        result = apply_leg_stretch(result, params["leg_zone_top"], params["leg_zone_bot"], params["leg_stretch"])
+
     return result
 
 
 def _img_to_base64(img):
     _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
     return f"data:image/jpeg;base64,{base64.b64encode(buf).decode()}"
+
+
+def _parse_sticker(sticker_data: str):
+    """将 base64 贴纸数据解码为 OpenCV BGR/A 图像，失败返回 None。"""
+    if not sticker_data or not sticker_data.startswith("data:image/"):
+        return None
+    try:
+        img_data = base64.b64decode(sticker_data.split(",", 1)[1])
+        img_array = np.frombuffer(img_data, np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_UNCHANGED)
+        # cv2.imdecode 返回 BGR/BGRA，无需颜色转换
+        return img
+    except Exception:
+        return None
+
+
+DEFAULT_STICKER_PATH = os.path.join(BASE_DIR, "assets", "sticker-1.png")
+_default_sticker_cache = None
+
+
+def _get_default_sticker():
+    """加载默认贴纸，缓存避免重复 IO。cv2.imread 返回 BGR/BGRA。"""
+    global _default_sticker_cache
+    if _default_sticker_cache is None:
+        if os.path.exists(DEFAULT_STICKER_PATH):
+            _default_sticker_cache = cv2.imread(DEFAULT_STICKER_PATH, cv2.IMREAD_UNCHANGED)
+    return _default_sticker_cache
 
 
 def _parse_ids(target_ids_str):
@@ -133,6 +177,14 @@ def _parse_ids(target_ids_str):
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    return INDEX_HTML
+
+
+@app.get("/v2", response_class=HTMLResponse)
+async def index_v2():
+    path = os.path.join(BASE_DIR, "index_new.html")
+    if os.path.exists(path):
+        return HTMLResponse(open(path, encoding="utf-8").read())
     return INDEX_HTML
 
 
@@ -195,7 +247,7 @@ async def analyze(file: UploadFile = File(...)):
                 _torch.mps.empty_cache()
             _torch.load = _orig_load
         except Exception as e:
-            print(f"[Analyze] SAM 2 精修跳过: {e}")
+            pass  # SAM 2 精修跳过
 
         track_results = []
         for new_id, tr in enumerate(raw_results):
@@ -207,7 +259,7 @@ async def analyze(file: UploadFile = File(...)):
         key_frame = best_frame
         available_ids = sorted([t.track_id for t in track_results])
 
-        default_params = {"fill_mode": "solid", "fill_color": "#000000",
+        default_params = {"fill_mode": "blur", "fill_color": "#000000",
                            "border_color": "#FFFFFF", "opacity": 1.0, "thickness": 3}
         rendered = _render_one_frame(key_frame, track_results, available_ids, default_params)
 
@@ -245,17 +297,39 @@ async def preview_frame(
     border_color: str = Form("#FFFFFF"),
     thickness: int = Form(3),
     opacity: float = Form(1.0),
+    face_blur_ids: str = Form(""),
+    sticker_data: str = Form(""),
+    face_mode: str = Form("blur"),
+    sticker_scale: float = Form(0.40),
+    skin_whiten: int = Form(0),
+    leg_stretch_on: str = Form("false"),
+    leg_stretch: int = Form(0),
+    leg_zone_top: float = Form(0.50),
+    leg_zone_bot: float = Form(0.75),
 ):
     task = TASKS.get(task_id)
     if not task:
         return JSONResponse({"error": "task_id 无效"}, 404)
     parsed_ids = _parse_ids(target_ids)
     labels_cfg = json.loads(labels_config) if labels_config.strip() else None
+    face_ids = _parse_ids(face_blur_ids)
+    # 解析贴纸：优先用户上传，否则用默认贴纸
+    sticker_img = _parse_sticker(sticker_data)
+    if sticker_img is None and face_mode == "sticker":
+        sticker_img = _get_default_sticker()
     try:
         params = {"fill_mode": fill_mode, "fill_color": fill_color,
-                   "border_color": border_color, "opacity": opacity, "thickness": thickness}
+                   "border_color": border_color, "opacity": opacity, "thickness": thickness,
+                   "skin_whiten": skin_whiten,
+                   "leg_stretch_on": leg_stretch_on == "true",
+                   "leg_stretch": leg_stretch,
+                   "leg_zone_top": leg_zone_top,
+                   "leg_zone_bot": leg_zone_bot}
         rendered = _render_one_frame(task["key_frame"], task["track_results"],
-                                      parsed_ids, params, labels_cfg)
+                                      parsed_ids, params, labels_cfg,
+                                      face_blur_ids=face_ids,
+                                      sticker_img=sticker_img,
+                                      sticker_scale=sticker_scale)
         return {"image_base64": _img_to_base64(rendered)}
     except Exception as e:
         return JSONResponse({"error": str(e)}, 500)
@@ -277,12 +351,27 @@ async def preview_snippet(
     thickness: int = Form(3),
     opacity: float = Form(1.0),
     device: str = Form(""),
+    follow_id: str = Form("-1"),
+    face_blur_ids: str = Form(""),
+    sticker_data: str = Form(""),
+    face_mode: str = Form("blur"),
+    sticker_scale: float = Form(0.40),
+    skin_whiten: int = Form(0),
+    leg_stretch_on: str = Form("false"),
+    leg_stretch: int = Form(0),
+    leg_zone_top: float = Form(0.50),
+    leg_zone_bot: float = Form(0.75),
 ):
     task = TASKS.get(task_id)
     if not task:
         return JSONResponse({"error": "task_id 无效"}, 404)
     parsed_ids = _parse_ids(target_ids)
     labels_cfg = json.loads(labels_config) if labels_config.strip() else None
+    follow_pid = int(follow_id) if follow_id and follow_id != "-1" else None
+    face_ids = _parse_ids(face_blur_ids)
+    sticker_img = _parse_sticker(sticker_data)
+    if sticker_img is None and face_mode == "sticker":
+        sticker_img = _get_default_sticker()
     video_path = task["video_path"]
     snippet_path = os.path.join(os.path.dirname(video_path), "snippet.mp4")
     snippet_frames = min(int(task["fps"] * 3), task["total_frames"])
@@ -326,6 +415,15 @@ async def preview_snippet(
                     progress_callback=_on_progress,
                     fill_mode=fill_mode, fill_color=fill_color,
                     border_color=border_color, opacity=opacity,
+                    follow_id=follow_pid,
+                    face_blur_ids=face_ids,
+                    sticker_img=sticker_img,
+                    sticker_scale=sticker_scale,
+                    skin_whiten=skin_whiten,
+                    leg_stretch_on=leg_stretch_on == "true",
+                    leg_stretch=leg_stretch,
+                    leg_zone_top=leg_zone_top,
+                    leg_zone_bot=leg_zone_bot,
                 )
                 result["status"] = "done"
                 if PROGRESS.get(task_id, {}).get("generation") == gen:
@@ -384,6 +482,16 @@ async def render(
     thickness: int = Form(3),
     opacity: float = Form(1.0),
     device: str = Form(""),
+    follow_id: str = Form("-1"),
+    face_blur_ids: str = Form(""),
+    sticker_data: str = Form(""),
+    face_mode: str = Form("blur"),
+    sticker_scale: float = Form(0.40),
+    skin_whiten: int = Form(0),
+    leg_stretch_on: str = Form("false"),
+    leg_stretch: int = Form(0),
+    leg_zone_top: float = Form(0.50),
+    leg_zone_bot: float = Form(0.75),
 ):
     task = TASKS.get(task_id)
     if not task:
@@ -392,6 +500,12 @@ async def render(
     labels_cfg = json.loads(labels_config) if labels_config.strip() else None
     if not parsed_ids:
         return JSONResponse({"error": "没有选中任何人"}, 400)
+
+    follow_pid = int(follow_id) if follow_id and follow_id != "-1" else None
+    face_ids = _parse_ids(face_blur_ids)
+    sticker_img = _parse_sticker(sticker_data)
+    if sticker_img is None and face_mode == "sticker":
+        sticker_img = _get_default_sticker()
 
     output_path = os.path.join(os.path.dirname(task["video_path"]), "result.mp4")
 
@@ -429,6 +543,15 @@ async def render(
                     progress_callback=_on_progress,
                     fill_mode=fill_mode, fill_color=fill_color,
                     border_color=border_color, opacity=opacity,
+                    follow_id=follow_pid,
+                    face_blur_ids=face_ids,
+                    sticker_img=sticker_img,
+                    sticker_scale=sticker_scale,
+                    skin_whiten=skin_whiten,
+                    leg_stretch_on=leg_stretch_on == "true",
+                    leg_stretch=leg_stretch,
+                    leg_zone_top=leg_zone_top,
+                    leg_zone_bot=leg_zone_bot,
                 )
                 result["status"] = "done"
                 if PROGRESS.get(task_id, {}).get("generation") == gen:
@@ -456,17 +579,87 @@ async def render(
 
 
 # ================================================================
+#  /crop_result/{task_id} — 对成品视频应用画幅裁剪
+# ================================================================
+
+@app.post("/crop_result/{task_id}")
+async def crop_result(task_id: str, crop_mode: str = Form(...), crop_offset: float = Form(0)):
+    task = TASKS.get(task_id)
+    if not task:
+        return JSONResponse({"error": "task_id 无效"}, 404)
+    result_path = os.path.join(os.path.dirname(task["video_path"]), "result.mp4")
+    if not os.path.exists(result_path):
+        return JSONResponse({"error": "成品视频不存在，请先生成视频"}, 404)
+
+    RATIOS = {"1:1": 1.0, "4:3": 4/3, "16:9": 16/9, "9:16": 9/16}
+    tr = RATIOS.get(crop_mode)
+    if not tr:
+        return JSONResponse({"error": f"不支持的裁剪比例: {crop_mode}"}, 400)
+
+    cropped_path = os.path.join(os.path.dirname(task["video_path"]), "result_cropped.mp4")
+    try:
+        def _do_crop():
+            cap = cv2.VideoCapture(result_path)
+            sw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            sh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            sr = sw / sh if sh > 0 else 1
+            if abs(sr - tr) < 0.01:
+                cap.release()
+                shutil.copy2(result_path, cropped_path)
+                return
+            if tr > sr:
+                nh = int(sw / tr); nh -= nh % 2
+                margin = sh - nh
+                shift = int(margin * crop_offset / 2)
+                y1 = max(0, min(sh - nh, (sh - nh) // 2 + shift))
+                x1, x2, y2 = 0, sw, y1 + nh
+            else:
+                nw = int(sh * tr); nw -= nw % 2
+                margin = sw - nw
+                shift = int(margin * crop_offset / 2)
+                x1 = max(0, min(sw - nw, (sw - nw) // 2 + shift))
+                y1, y2, x2 = 0, sh, x1 + nw
+            out_w, out_h = x2 - x1, y2 - y1
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(cropped_path, fourcc, fps, (out_w, out_h))
+            while True:
+                ret, frame = cap.read()
+                if not ret: break
+                out.write(frame[y1:y2, x1:x2])
+            cap.release(); out.release()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _do_crop)
+        return {"ok": True, "path": cropped_path,
+                "download_url": f"/result/{task_id}?cropped=1"}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, 500)
+
+
+# ================================================================
 #  /result/{task_id} — 下载已完成的视频
 # ================================================================
 
 @app.get("/result/{task_id}")
-async def get_result(task_id: str, res: str = "original", fps: str = "original"):
+async def get_result(task_id: str, res: str = "original", fps: str = "original", cropped: str = "0"):
     p = PROGRESS.get(task_id, {})
-    if not p.get("done"):
-        return JSONResponse({"status": "not_ready"}, 202)
+    output_path = p.get("output_path", "")
+    # 如果 PROGRESS 丢失（服务重启），尝试从磁盘恢复路径
+    if not output_path:
+        task_dir = os.path.join(TASKS_DIR, task_id)
+        mp4_path = os.path.join(task_dir, "result.mp4")
+        if os.path.exists(mp4_path):
+            output_path = mp4_path
+    if cropped == "1":
+        cp = os.path.join(os.path.dirname(output_path) if output_path else os.path.join(TASKS_DIR, task_id), "result_cropped.mp4")
+        if os.path.exists(cp):
+            output_path = cp
+    if not output_path or not os.path.exists(output_path):
+        if not p.get("done"):
+            return JSONResponse({"status": "not_ready"}, 202)
+        return JSONResponse({"error": "输出文件不存在"}, 404)
     if p.get("error"):
         return JSONResponse({"error": p["error"]}, 500)
-    output_path = p.get("output_path", "")
     if not output_path or not os.path.exists(output_path):
         return JSONResponse({"error": "输出文件不存在"}, 404)
 

@@ -1,175 +1,95 @@
-# 多人舞蹈视频智能打码
+# DanceAnon — AI 智能舞蹈视频打码工具
 
-上传舞蹈视频 → 勾选人物 → 按需调整参数 → 一键生成打码。AI 自动追踪全身，快速动作也不会漏。
+上传视频即可自动识别追踪画面中的人物，支持全身打码、面部贴纸、美白拉腿、自动跟随运镜，Web 界面实时预览并导出。
 
-<img src="assets/dem.jpg" alt="手机端展示" width="320">
+## 功能
 
-<img src="assets/result.GIF" alt="打码效果展示" width="640">
+- 🎯 AI 人物追踪 — YOLO + CUTIE 跨帧追踪，快速舞蹈不丢人
+- 🔒 全身打码 — 模糊/纯色/渐变，边框与透明度可调
+- 😊 面部贴纸 — 内置贴纸 + 自定义上传，大小可调
+- 🎥 自动跟随 — 镜头平滑跟随选中人物
+- ✨ 美白拉腿 — 强度实时可调
+- ✂️ 裁剪时长与画幅 — 拖拽选取片段，多比例裁剪
+- ⚡ GPU 加速 — Apple Silicon MPS / NVIDIA CUDA
+- 🌐 纯 Web 操作 — 上传、预览、调节、下载一站式
 
----
-
-## 运行脚本快速开始
+## 安装与启动
 
 ### Mac
 
-打开「终端」，依次复制粘贴以下命令（建议关闭 VPN）：
+打开终端，依次运行：
 
 ```bash
-cd 这里把项目文件夹拖进来
+cd 项目目录
 bash scripts/mac/setup.sh
 bash scripts/mac/run.sh
 ```
 
 浏览器打开 `http://localhost:8002`。
 
+可选：`brew install ffmpeg` 以获得音频合成支持。
+
 ### Windows
 
-**进入 `scripts/windows/` 文件夹：先双击 `setup.bat`， 然后双击 `run.bat`。**（建议关闭 VPN）
-完成后浏览器打开 `http://localhost:8002`。
+进入 `scripts/windows/` 文件夹：先双击 `setup.bat`，然后双击 `run.bat`。
 
-> **注意**：没有 NVIDIA 显卡的电脑（纯 CPU 模式）第一次处理视频时初始化较慢，可能需等待 5-10 分钟，不是卡死了。如果报错，再点一次即可正常运行。
+浏览器打开 `http://localhost:8002`。
 
----
+可选：从 https://ffmpeg.org 下载 ffmpeg 并添加到 PATH，以获得音频合成支持。
 
-## ？脚本执行不了怎么办
+> 没有 NVIDIA 显卡的电脑首次处理可能需等待 5-10 分钟，不是卡死。
 
-跟着下面步骤走，**全程复制粘贴**，轻松搞定。
-
-### 第一步：一键安装
-
-#### Mac 用户
-
-打开「终端」，把下面三行一行一行复制进去，每行按回车：
+### 手动安装
 
 ```bash
-cd 文件夹路径
-```
-
-```bash
+cd 项目目录
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate      # Mac
+.venv\Scripts\activate         # Windows
 pip install -r requirements.txt
+python -m uvicorn api:app --host 0.0.0.0 --port 8002
 ```
 
-看到 `Successfully installed ...` 就说明装好了。
+## 使用说明
 
-#### Windows 用户
+1. 点「选取视频」选择一个视频
+2. 拖动裁剪条选取片段，点「上传并分析」
+3. 勾选要打码的人（默认全选）
+4. 调节填充模式、颜色、透明度、美白、拉腿
+5. 可选：给未打码的人添加面部贴纸
+6. 可选：点「跟随」让镜头跟随某个人物
+7. 点「生成完整视频」，等待处理完成
+8. 在结果页可选裁剪画幅比例，然后保存下载
 
-按 `Win+R`，输入 `cmd`，回车。在黑窗口里**一行一行**复制，每行按回车：
+> 💡 **提示**：需要打码的人必须在视频首帧内才能被 AI 追踪。建议把视频开头截到所有人物都在画面里的位置。同时人物建议控制在 8 人以内。
 
-```bash
-cd 文件夹路径
-```
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
----
-
-### 第二步：启动
-
-**每次使用都要先做这一步**。
-
-#### Mac
-
-```bash
-cd 文件夹路径
-source .venv/bin/activate
-uvicorn api:app --host 0.0.0.0 --port 8002
-```
-
-#### Windows
-
-```bash
-cd 文件夹路径
-.venv\Scripts\activate
-uvicorn api:app --host 0.0.0.0 --port 8002
-```
-
-看到 `Uvicorn running on http://0.0.0.0:8002` 就说明启动成功了。
-
----
-
-### 第三步：打开网页
-
-浏览器地址栏输入：**`http://localhost:8002`**，回车。
-
-? **手机也能用**：手机和电脑连同一个 WiFi，手机浏览器输入 `http://电脑IP:8002`。  
-（Mac：系统设置 → 网络 → 看 IP 地址。Windows：`Win+R` → `cmd` → `ipconfig` → 找 IPv4 地址）
-
----
-
-## 怎么用
-
-1. 点「上传并分析」，选一个舞蹈视频（**视频比例不限，但首帧很关键，最好把视频开头截到需要打码的人物尽可能都展示出来的位置，人数控制在8人以内最佳**）
-2. 勾选你要打码的人（默认全选）
-3. 调颜色、白边、透明度（实时预览）
-4. 可以点「生成 3 秒预览」先试一下效果
-5. 满意就点「生成完整视频」，等着就行
-6. 完成后点「下载视频」
-
----
 ## 可能遇到的问题
 
-### ? 网页打不开 / 显示「无法连接」
+### 网页打不开 / 显示「无法连接」
 
-1. 确认黑窗口还开着（关掉窗口服务就停了）
-2. 确认黑窗口里最后一行是 `Uvicorn running on ...`
-3. 确认网址写的是 `http://localhost:8002`（不是 https）
+1. 确认终端窗口还开着（关掉窗口服务就停了）
+2. 确认地址是 `http://localhost:8002`（不是 https）
 
-### ? 提示 `address already in use`（端口被占用）
+### 提示 `address already in use`
 
-说明之前已经启动过一个服务，关掉重开：
-
-Mac：
 ```bash
+# Mac
 lsof -ti:8002 | xargs kill -9
 bash scripts/mac/run.sh
+
+# Windows
+关掉所有终端窗口，重新双击 run.bat
 ```
-Windows：关掉所有黑窗口，重新双击 `run.bat`。
 
-### ? 处理一半报错了 / 卡住了
-
-刷新网页，上传视频重新来一次。大概率是显存不够，尝试处理短一点的视频。
-
-### ? 手机上访问不了
-
-1. 确认手机和电脑连的是**同一个 WiFi**
-2. 确认网址格式是 `http://IP:8002`（不是 localhost）
-3. Mac 防火墙关了试试：系统设置 → 网络 → 防火墙 → 关闭
-
-### ? 处理速度很慢
-
-实测数据参考：
+### 处理速度慢
 
 | 设备 | 视频时长 | 处理耗时 |
 |------|---------|---------|
-| Mac (Apple M 芯片 GPU) | 25 秒 | ~160 秒 |
+| Mac (Apple M 芯片) | 25 秒 | ~160 秒 |
 | Windows (纯 CPU) | 10 秒 | ~400 秒 |
 
-有 NVIDIA 显卡可大幅加速。建议视频内同时出现人物在 8 人以内，超出可能因显存不足导致崩溃。
+有 NVIDIA 显卡可大幅加速。
 
----
+## 技术栈
 
-## 命令行快速启动
-
-Mac：
-```bash
-git clone https://github.com/Corgiac/dance-anonymizer.git
-cd dance-anonymizer
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn api:app --host 0.0.0.0 --port 8002
-```
-
-Windows：
-```bash
-git clone https://github.com/Corgiac/dance-anonymizer.git
-cd dance-anonymizer
-python -m venv .venv && .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn api:app --host 0.0.0.0 --port 8002
-```
+Python · FastAPI · OpenCV · YOLO · CUTIE · SAM2 · PyTorch
