@@ -630,6 +630,15 @@ async def crop_result(task_id: str, crop_mode: str = Form(...), crop_offset: flo
             cap.release(); out.release()
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _do_crop)
+        # 裁剪后合回音频
+        from src.utils import has_audio_stream, merge_audio_with_moviepy
+        if has_audio_stream(result_path):
+            try:
+                merge_audio_with_moviepy(cropped_path, result_path,
+                                          cropped_path + ".audio.mp4")
+                os.replace(cropped_path + ".audio.mp4", cropped_path)
+            except Exception:
+                pass  # 音频合成失败不阻塞，无声版也能用
         return {"ok": True, "path": cropped_path,
                 "download_url": f"/result/{task_id}?cropped=1"}
     except Exception as e:
