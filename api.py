@@ -632,9 +632,10 @@ async def crop_result(task_id: str, crop_mode: str = Form(...), crop_offset: flo
         await loop.run_in_executor(None, _do_crop)
         # 裁剪后合回音频
         from src.utils import has_audio_stream, merge_audio_with_moviepy
-        if has_audio_stream(result_path):
+        src_audio = task["video_path"]  # 原片一定有音频
+        if has_audio_stream(src_audio):
             try:
-                merge_audio_with_moviepy(cropped_path, result_path,
+                merge_audio_with_moviepy(cropped_path, src_audio,
                                           cropped_path + ".audio.mp4")
                 os.replace(cropped_path + ".audio.mp4", cropped_path)
             except Exception:
