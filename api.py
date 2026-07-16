@@ -193,7 +193,7 @@ async def index_v2():
 # ================================================================
 
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
+async def analyze(file: UploadFile = File(...), trim_start: float = Form(0), trim_end: float = Form(0)):
     task_id = uuid.uuid4().hex[:10]
     task_dir = os.path.join(TASKS_DIR, task_id)
     os.makedirs(task_dir, exist_ok=True)
@@ -203,6 +203,19 @@ async def analyze(file: UploadFile = File(...)):
     try:
         with open(video_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
+
+        # 时长裁剪：用 ffmpeg 截取 trim_start ~ trim_end
+        if trim_end > 0 and trim_end - trim_start > 0.5:
+            from src.utils import _get_ffmpeg
+            trimmed = os.path.join(task_dir, f"trimmed{ext}")
+            import subprocess
+            subprocess.run([
+                _get_ffmpeg(), "-y", "-ss", str(trim_start), "-to", str(trim_end),
+                "-i", video_path, "-c", "copy", trimmed
+            ], capture_output=True, timeout=60)
+            if os.path.exists(trimmed) and os.path.getsize(trimmed) > 1000:
+                os.remove(video_path)
+                os.rename(trimmed, video_path)
 
         cap = cv2.VideoCapture(video_path)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
