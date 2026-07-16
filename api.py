@@ -256,6 +256,8 @@ async def analyze(file: UploadFile = File(...)):
                 track_id=new_id, bbox=tr.bbox,
                 confidence=tr.confidence, mask=mask, foot_y=tr.foot_y,
             ))
+        if not track_results:
+            return JSONResponse({"error": "未检测到人物，请确保首帧画面中有人物出现"}, 400)
         key_frame = best_frame
         available_ids = sorted([t.track_id for t in track_results])
 
