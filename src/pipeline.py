@@ -200,9 +200,7 @@ class DanceAnonymizerPipeline:
                 "elapsed": 0, "eta": 0, "fps": 0,
             })
 
-        # PNG 序列临时目录（高质量无损保存，最后 ffmpeg 编码）
-        encode_dir = os.path.join(os.path.dirname(output_path), "_encode_frames")
-        os.makedirs(encode_dir, exist_ok=True)
+        tmp_video = output_path + ".tmp_video.mp4"
         smooth_history = {}
         _yolo_persons = {}
         processed_count = 0
@@ -212,8 +210,16 @@ class DanceAnonymizerPipeline:
         smooth_factor = 0.40
         prev_x1, prev_y1 = 0, 0
 
+        writer = None
         pbar = None
         try:
+            # 优先 avc1 (H.264, 高质量)，回退 mp4v
+            fourcc = cv2.VideoWriter_fourcc(*"avc1")
+            writer = cv2.VideoWriter(tmp_video, fourcc, fps, (out_w, out_h))
+            if not writer.isOpened():
+                writer = cv2.VideoWriter(tmp_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (out_w, out_h))
+            if not writer.isOpened():
+                raise RuntimeError("无法创建输出视频文件，请检查 OpenCV 编码器支持")
             pbar = tqdm(total=actual_frames, desc=engine.step_name, unit="帧",
                          disable=not show_progress)
 
@@ -295,7 +301,7 @@ class DanceAnonymizerPipeline:
                         track_results.append(p['mask_track'])
 
                 if not track_results:
-                    cv2.imwrite(os.path.join(encode_dir, f"{processed_count:06d}.png"), work_frame)
+                    writer.write(work_frame)
                     processed_count += 1
                     pbar.update(1)
                     continue
@@ -322,7 +328,7 @@ class DanceAnonymizerPipeline:
                 if result_frame.shape[0] != out_h:
                     result_frame = cv2.resize(result_frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
 
-                cv2.imwrite(os.path.join(encode_dir, f"{processed_count:06d}.png"), result_frame)
+                writer.write(result_frame)
                 processed_count += 1
                 pbar.update(1)
 
@@ -339,6 +345,8 @@ class DanceAnonymizerPipeline:
         finally:
             if pbar is not None:
                 pbar.close()
+            if writer is not None:
+                writer.release()
 
         elapsed = time.time() - start_time
         if show_progress:
@@ -346,17 +354,11 @@ class DanceAnonymizerPipeline:
             print(f"[Pipeline]   渲染完成: {processed_count} 帧 "
                   f"耗时 {elapsed:.1f}s ({fps_proc:.2f} fps)")
 
-        # ---- 步骤 4: ffmpeg 编码高质量 MP4 + 音频 ----
+        # ---- 步骤 4: 音频 + 清理 ----
         if show_progress:
-            print("[Pipeline] 步骤 4/4: 编码视频 + 音频合成...")
+            print("[Pipeline] 步骤 4/4: 音频合成 + 清理...")
         if progress_callback:
             progress_callback({"step": 4, "step_name": "生成视频", "step_total": 4})
-
-        # 用 ffmpeg 从 PNG 序列编码高质量 MP4
-        tmp_video = output_path + ".tmp_video.mp4"
-        self._encode_png_sequence(encode_dir, tmp_video, fps, out_w, out_h, show_progress)
-        # 清理 PNG 缓存
-        shutil.rmtree(encode_dir, ignore_errors=True)
 
         has_audio = has_audio_stream(input_path)
         if has_audio:
@@ -381,27 +383,6 @@ class DanceAnonymizerPipeline:
                 print(f"[Pipeline]   已清理: {frames_dir}")
 
         return output_path
-
-    @staticmethod
-    def _encode_png_sequence(frames_dir, output_path, fps, width, height, show_progress):
-        """用 ffmpeg 将 PNG 序列编码为高质量 MP4。"""
-        import subprocess
-        from .utils import _get_ffmpeg
-        ffmpeg = _get_ffmpeg()
-        cmd = [
-            ffmpeg, "-y",
-            "-framerate", str(fps),
-            "-i", os.path.join(frames_dir, "%06d.png"),
-            "-c:v", "libx264",
-            "-crf", "16",
-            "-preset", "fast",
-            "-pix_fmt", "yuv420p",
-            "-vf", f"scale={width}:{height}:flags=lanczos",
-            output_path
-        ]
-        if show_progress:
-            print(f"[Pipeline]   ffmpeg 编码: {width}x{height} CRF 16")
-        subprocess.run(cmd, capture_output=True, timeout=600)
 
     def reset(self):
         if self._tracker:
