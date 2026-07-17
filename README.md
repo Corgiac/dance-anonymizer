@@ -30,7 +30,7 @@ bash scripts/mac/setup.sh
 
 看到 `安装完成！` 就说明装好了。
 
-> 💡 **可选**：如果想保留视频声音，还需要安装 ffmpeg。在终端输入 `brew install ffmpeg` 回车。没有安装 brew 的话，先访问 https://brew.sh 按提示安装。
+> 💡 安装脚本会自动帮你装好 ffmpeg（音频合成所需），无需手动处理。
 
 #### Windows 用户
 
@@ -38,7 +38,7 @@ bash scripts/mac/setup.sh
 2. **双击 `setup.bat`**，等待安装完成
 3. 看到 `Setup complete!` 后按任意键关闭窗口
 
-> 💡 **可选**：如果想保留视频声音，从 https://ffmpeg.org 下载 ffmpeg，解压后将 `bin` 文件夹路径添加到系统 PATH 环境变量。
+> 💡 安装脚本会自动下载 ffmpeg（音频合成所需），无需手动处理。
 
 ### 第三步：启动服务
 
@@ -147,7 +147,7 @@ bash scripts/mac/run.sh
 
 ### 生成的视频没有声音
 
-需要安装 ffmpeg（见第二步的可选说明）。安装后重新生成视频即可。
+运行安装脚本会自动装好 ffmpeg。如仍有问题，重新运行一次 setup 脚本即可。
 
 ### 手机访问不了
 
