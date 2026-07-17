@@ -9,10 +9,15 @@ echo [1/3] Checking Python...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo.
-    echo Python not found. Opening download page...
-    start https://www.python.org/downloads/
-    echo Please install Python 3.10+ and check "Add Python to PATH"
-    echo Then run this setup again.
+    echo Python not found. Trying winget install...
+    winget install Python.Python.3.11 --silent 2>nul
+    if %errorlevel% equ 0 (
+        echo Python 3.11 installed. Please restart this setup.
+    ) else (
+        echo winget failed. Opening download page...
+        start https://www.python.org/downloads/
+        echo Please install Python 3.10+ and check "Add Python to PATH"
+    )
     pause
     exit /b 1
 )
