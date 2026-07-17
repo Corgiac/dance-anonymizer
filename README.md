@@ -30,15 +30,11 @@ bash scripts/mac/setup.sh
 
 看到 `安装完成！` 就说明装好了。
 
-> 💡 安装脚本会自动帮你装好 ffmpeg（音频合成所需），无需手动处理。
-
 #### Windows 用户
 
 1. 进入解压后的文件夹 → `scripts` → `windows`
 2. **双击 `setup.bat`**，等待安装完成
 3. 看到 `Setup complete!` 后按任意键关闭窗口
-
-> 💡 安装脚本会自动下载 ffmpeg（音频合成所需），无需手动处理。
 
 ### 第三步：启动服务
 
