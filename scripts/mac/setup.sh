@@ -26,11 +26,22 @@ if command -v ffmpeg &>/dev/null; then
     echo "  ffmpeg 已安装 ✓"
 elif command -v brew &>/dev/null; then
     echo "  正在通过 Homebrew 安装 ffmpeg..."
-    brew install ffmpeg -q 2>/dev/null && echo "  ffmpeg 安装完成 ✓" || echo "  ffmpeg 安装失败，可稍后手动执行: brew install ffmpeg"
+    brew install ffmpeg -q 2>/dev/null && echo "  ffmpeg 安装完成 ✓" || echo "  ffmpeg 安装失败"
 else
-    echo "  未检测到 ffmpeg，视频生成后将无音频"
-    echo "  如需音频，请先安装 Homebrew (https://brew.sh)"
-    echo "  然后执行: brew install ffmpeg"
+    echo "  下载静态编译版 ffmpeg..."
+    FFMPEG_URL="https://evermeet.cx/ffmpeg/getrelease/zip"
+    curl -L -o /tmp/ffmpeg.zip "$FFMPEG_URL" 2>/dev/null
+    if [ -f /tmp/ffmpeg.zip ]; then
+        unzip -o /tmp/ffmpeg.zip -d /tmp/ffmpeg_extract >/dev/null 2>&1
+        mkdir -p "$HOME/.local/bin" 2>/dev/null
+        cp /tmp/ffmpeg_extract/ffmpeg "$HOME/.local/bin/" 2>/dev/null
+        chmod +x "$HOME/.local/bin/ffmpeg" 2>/dev/null
+        rm -rf /tmp/ffmpeg.zip /tmp/ffmpeg_extract
+        export PATH="$HOME/.local/bin:$PATH"
+        echo "  ffmpeg 安装到 $HOME/.local/bin ✓"
+    else
+        echo "  下载失败。可手动安装: brew install ffmpeg"
+    fi
 fi
 
 echo ""
