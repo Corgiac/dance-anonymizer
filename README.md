@@ -9,6 +9,20 @@
 - **内存**：建议 8GB 以上
 - **显卡**：Apple M 系列芯片（MPS 加速）、NVIDIA 显卡（CUDA 加速）。纯 CPU 也能运行，只是较慢。
 
+### 安装 Python
+
+如果电脑上还没有 Python 3.10+，先安装：
+
+**Mac**：打开终端，输入：
+
+```bash
+brew install python@3.11
+```
+
+没有 Homebrew？先访问 https://brew.sh 按提示安装，再执行上面命令。或者直接从 https://www.python.org/downloads/ 下载 macOS 安装包。
+
+**Windows**：访问 https://www.python.org/downloads/ 下载安装包，**安装时务必勾选「Add Python to PATH」**，然后一直下一步即可。
+
 ## 快速开始
 
 ### 第一步：下载项目
