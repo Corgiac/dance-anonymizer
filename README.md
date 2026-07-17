@@ -184,8 +184,8 @@ python -m uvicorn api:app --host 0.0.0.0 --port 8002
 本项目依赖以下 AI 模型：
 
 - `yolo11s-seg.pt` — 人物检测（项目自带）
-- `sam2_hiera_tiny.pt` — SAM2 首帧精修（需自行下载）
-- `yolov8n-pose.pt` — 姿态检测（可选，面部贴纸定位用）
+- `sam2_hiera_tiny.pt` — SAM2 首帧 mask 精修（需自行下载）
+- CUTIE 模型 — 人物跨帧追踪（`vendor/Cutie/weights/` 目录，项目自带）
 
 其中 `sam2_hiera_tiny.pt` 因超过 GitHub 100MB 限制未包含在仓库中，请下载后放到项目根目录：
 
