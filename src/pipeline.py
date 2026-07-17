@@ -125,7 +125,6 @@ class DanceAnonymizerPipeline:
         if progress_callback:
             progress_callback({"step": 2, "step_name": "分析人物", "step_total": 4})
 
-        # 使用预计算检测结果 (来自 /analyze, 已含 SAM2 精修 mask, 避免重复 YOLO)
         sam2_already_refined = False
         if precomputed_detections is not None:
             detections = precomputed_detections
@@ -136,7 +135,6 @@ class DanceAnonymizerPipeline:
             detections = self._tracker.detect_first_frame(first_frame)
             if show_progress:
                 print(f"[Pipeline]   YOLO: {len(detections)} 人")
-            # 从左到右排序 + 重分配 ID
             detections.sort(key=lambda t: (t.bbox[0] + t.bbox[2]) / 2.0)
             sorted_dets = []
             for new_id, det in enumerate(detections):
@@ -144,11 +142,9 @@ class DanceAnonymizerPipeline:
                     confidence=det.confidence, mask=det.mask, foot_y=det.foot_y))
             detections = sorted_dets
 
-        # 追踪范围
-        # 追踪所有人（target + non-target），渲染时只对 target 打码
         all_tracked_ids = [d.track_id for d in detections]
 
-        # 跟随模式参数（必须在初始化裁切之前定义）
+        # 跟随模式参数
         follow_enabled = follow_id is not None and follow_id >= 0
         smooth_x, smooth_y = w / 2, h / 2
         follow_y_offset = 0.12
@@ -165,14 +161,13 @@ class DanceAnonymizerPipeline:
                                  verbose=show_progress)
         engine._max_input_dim = self.effect_config.get("max_input_dim", 960)
 
-        # 跟随模式：首帧也裁切，CUTIE 在裁切后的小画面上初始化
+        # 跟随模式：首帧也裁切
         init_frame = first_frame
         if follow_enabled:
             cx, cy = int(smooth_x), int(smooth_y)
             x1i = max(0, min(w - crop_w, cx - crop_w // 2))
             y1i = max(0, min(h - crop_h, cy - crop_h // 2))
             init_frame = first_frame[y1i:y1i + crop_h, x1i:x1i + crop_w]
-            # 调整预计算 detections 的 bbox/mask 到裁切坐标系
             adjusted_dets = []
             for det in detections:
                 new_bbox = (
@@ -205,26 +200,20 @@ class DanceAnonymizerPipeline:
                 "elapsed": 0, "eta": 0, "fps": 0,
             })
 
-        tmp_video = output_path + ".tmp_video.mp4"
+        # PNG 序列临时目录（高质量无损保存，最后 ffmpeg 编码）
+        encode_dir = os.path.join(os.path.dirname(output_path), "_encode_frames")
+        os.makedirs(encode_dir, exist_ok=True)
         smooth_history = {}
-        _yolo_persons = {}  # YOLO 检测到的新入镜人物 {track_id: {mask_track, last_seen}}
+        _yolo_persons = {}
         processed_count = 0
         start_time = time.time()
         frame_skip = self.effect_config.get("frame_skip", 1)
 
-        smooth_factor = 0.40  # LERP 平滑系数
-        prev_x1, prev_y1 = 0, 0  # 上一帧的裁切起点（原始坐标）
+        smooth_factor = 0.40
+        prev_x1, prev_y1 = 0, 0
 
-        writer = None
         pbar = None
         try:
-            writer = cv2.VideoWriter(tmp_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (out_w, out_h))
-            if not writer.isOpened():
-                writer = cv2.VideoWriter(tmp_video, cv2.VideoWriter_fourcc(*"avc1"), fps, (out_w, out_h))
-            if not writer.isOpened():
-                raise RuntimeError(
-                    f"无法创建输出视频文件。请检查 OpenCV 编码器支持 (mp4v/avc1)。"
-                    f"可尝试: pip install opencv-python-headless 或 conda install -c conda-forge opencv")
             pbar = tqdm(total=actual_frames, desc=engine.step_name, unit="帧",
                          disable=not show_progress)
 
@@ -241,15 +230,13 @@ class DanceAnonymizerPipeline:
                     frame = cv2.imread(jpg_path)
                     if frame is None: continue
 
-                # ★ 先跟随裁切，再 CUTIE/效果（小画面上跑更快）
+                # 先跟随裁切，再 CUTIE/效果
                 work_frame = frame
                 if follow_enabled:
-                    # 用上一帧的 bbox（裁切坐标系）转回原始坐标，算新的裁切位置
                     if f_idx > 0 and track_results:
                         follow_track = next((t for t in track_results if t.track_id == follow_id), None)
                         if follow_track is not None:
                             bx1, by1, bx2, by2 = follow_track.bbox
-                            # bbox 是裁切坐标系，转回原始坐标
                             target_x = prev_x1 + (bx1 + bx2) / 2
                             target_y = prev_y1 + (by1 + by2) / 2 - h * follow_y_offset
                             smooth_x += (target_x - smooth_x) * smooth_factor
@@ -259,13 +246,13 @@ class DanceAnonymizerPipeline:
                     prev_y1 = max(0, min(h - crop_h, cy - crop_h // 2))
                     work_frame = frame[prev_y1:prev_y1 + crop_h, prev_x1:prev_x1 + crop_w]
 
-                # 跳帧: 隔帧复用上一帧 mask
+                # 跳帧
                 if frame_skip > 0 and f_idx > 0 and f_idx % (frame_skip + 1) != 0:
                     pass
                 else:
                     track_results = engine.step(work_frame.copy(), f_idx)
 
-                # 定期 YOLO 检测新人入镜（每 30 帧）
+                # 定期 YOLO 检测新人
                 if f_idx > 0 and f_idx % 30 == 0 and self._tracker is not None:
                     try:
                         new_raw = self._tracker.detect_first_frame(work_frame.copy())
@@ -308,12 +295,12 @@ class DanceAnonymizerPipeline:
                         track_results.append(p['mask_track'])
 
                 if not track_results:
-                    writer.write(work_frame)
+                    cv2.imwrite(os.path.join(encode_dir, f"{processed_count:06d}.png"), work_frame)
                     processed_count += 1
                     pbar.update(1)
                     continue
 
-                # 特效渲染（在裁切后的小画面上）
+                # 特效渲染
                 result_frame, smooth_history = process_frame_effects(
                     frame=work_frame, track_results=track_results,
                     smooth_history=smooth_history, frame_idx=f_idx,
@@ -332,11 +319,10 @@ class DanceAnonymizerPipeline:
                     leg_zone_top=leg_zone_top,
                     leg_zone_bot=leg_zone_bot,
                 )
-                # 拉腿后 resize 回输出高度
                 if result_frame.shape[0] != out_h:
                     result_frame = cv2.resize(result_frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
 
-                writer.write(result_frame)
+                cv2.imwrite(os.path.join(encode_dir, f"{processed_count:06d}.png"), result_frame)
                 processed_count += 1
                 pbar.update(1)
 
@@ -353,8 +339,6 @@ class DanceAnonymizerPipeline:
         finally:
             if pbar is not None:
                 pbar.close()
-            if writer is not None:
-                writer.release()
 
         elapsed = time.time() - start_time
         if show_progress:
@@ -362,11 +346,17 @@ class DanceAnonymizerPipeline:
             print(f"[Pipeline]   渲染完成: {processed_count} 帧 "
                   f"耗时 {elapsed:.1f}s ({fps_proc:.2f} fps)")
 
-        # ---- 步骤 4: 音频 + 清理 ----
+        # ---- 步骤 4: ffmpeg 编码高质量 MP4 + 音频 ----
         if show_progress:
-            print("[Pipeline] 步骤 4/4: 音频合成 + 清理...")
+            print("[Pipeline] 步骤 4/4: 编码视频 + 音频合成...")
         if progress_callback:
             progress_callback({"step": 4, "step_name": "生成视频", "step_total": 4})
+
+        # 用 ffmpeg 从 PNG 序列编码高质量 MP4
+        tmp_video = output_path + ".tmp_video.mp4"
+        self._encode_png_sequence(encode_dir, tmp_video, fps, out_w, out_h, show_progress)
+        # 清理 PNG 缓存
+        shutil.rmtree(encode_dir, ignore_errors=True)
 
         has_audio = has_audio_stream(input_path)
         if has_audio:
@@ -391,6 +381,27 @@ class DanceAnonymizerPipeline:
                 print(f"[Pipeline]   已清理: {frames_dir}")
 
         return output_path
+
+    @staticmethod
+    def _encode_png_sequence(frames_dir, output_path, fps, width, height, show_progress):
+        """用 ffmpeg 将 PNG 序列编码为高质量 MP4。"""
+        import subprocess
+        from .utils import _get_ffmpeg
+        ffmpeg = _get_ffmpeg()
+        cmd = [
+            ffmpeg, "-y",
+            "-framerate", str(fps),
+            "-i", os.path.join(frames_dir, "%06d.png"),
+            "-c:v", "libx264",
+            "-crf", "16",
+            "-preset", "fast",
+            "-pix_fmt", "yuv420p",
+            "-vf", f"scale={width}:{height}:flags=lanczos",
+            output_path
+        ]
+        if show_progress:
+            print(f"[Pipeline]   ffmpeg 编码: {width}x{height} CRF 16")
+        subprocess.run(cmd, capture_output=True, timeout=600)
 
     def reset(self):
         if self._tracker:
