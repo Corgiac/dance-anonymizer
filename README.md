@@ -187,7 +187,9 @@ python -m uvicorn api:app --host 0.0.0.0 --port 8002
 - `sam2_hiera_tiny.pt` — SAM2 首帧精修（需自行下载）
 - `yolov8n-pose.pt` — 姿态检测（可选，面部贴纸定位用）
 
-其中 `sam2_hiera_tiny.pt` 因超过 GitHub 100MB 限制未包含在仓库中，需从 [SAM2 官方仓库](https://github.com/facebookresearch/sam2) 下载 `sam2_hiera_tiny.pt`，放置到项目根目录。
+其中 `sam2_hiera_tiny.pt` 因超过 GitHub 100MB 限制未包含在仓库中，请下载后放到项目根目录：
+
+- 下载地址：https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt
 
 ## 技术栈
 
