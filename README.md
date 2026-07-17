@@ -7,7 +7,7 @@
 - **操作系统**：macOS / Windows / Linux
 - **Python**：3.10 或以上
 - **内存**：建议 8GB 以上
-- **显卡**（可选但强烈建议）：Apple M 系列芯片（MPS 加速）、NVIDIA 显卡（CUDA 加速）。纯 CPU 也能运行，只是较慢。
+- **显卡**：Apple M 系列芯片（MPS 加速）、NVIDIA 显卡（CUDA 加速）。纯 CPU 也能运行，只是较慢。
 
 ## 快速开始
 
