@@ -9,28 +9,19 @@ echo [1/3] Checking Python...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo.
-    echo Python not found. Trying winget install...
-    winget install Python.Python.3.11 --silent 2>nul
-    if %errorlevel% equ 0 (
-        echo Python 3.11 installed. Please restart this setup.
-    ) else (
-        echo winget failed. Opening download page...
-        start https://www.python.org/downloads/
-        echo Please install Python 3.10+ and check "Add Python to PATH"
-    )
+    echo ERROR: Python not found.
+    echo Please install Python 3.10+ from https://www.python.org/downloads/
+    echo IMPORTANT: Check "Add Python to PATH" during installation!
     pause
     exit /b 1
 )
 
-rem 检查 Python 版本 >= 3.10
 python -c "import sys; exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
 if %errorlevel% neq 0 (
     python --version
     echo.
-    echo Python version is too old. Need 3.10 or newer.
-    echo Opening download page...
-    start https://www.python.org/downloads/
-    echo After upgrading, run this setup again.
+    echo ERROR: Python 3.10 or newer required. Please upgrade.
+    echo Download from https://www.python.org/downloads/
     pause
     exit /b 1
 )

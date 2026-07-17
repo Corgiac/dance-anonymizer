@@ -8,27 +8,13 @@ echo "  DanceAnon - 环境安装"
 echo "========================================"
 
 echo "[1/3] 检查 Python..."
-if ! command -v python3 &>/dev/null; then
-    echo "  Python 未安装，尝试自动安装..."
-    if command -v brew &>/dev/null; then
-        brew install python@3.11 -q && echo "  Python 3.11 安装完成 ✓" || { echo "  安装失败，请手动安装：https://www.python.org/downloads/"; exit 1; }
-    else
-        echo "  请先安装 Python 3.10+：https://www.python.org/downloads/"
-        exit 1
-    fi
-fi
+python3 --version || { echo "请先安装 Python 3.10+：https://www.python.org/downloads/"; exit 1; }
 PY_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
 if [ "$PY_MINOR" -lt 10 ]; then
-    echo "  Python 3.$PY_MINOR 版本过低，需要 3.10+"
-    if command -v brew &>/dev/null; then
-        echo "  正在通过 Homebrew 升级..."
-        brew install python@3.11 -q && echo "  Python 3.11 安装完成 ✓" || { echo "  升级失败，请手动升级：brew install python@3.11"; exit 1; }
-    else
-        echo "  请手动升级：https://www.python.org/downloads/"
-        exit 1
-    fi
+    echo "Python 3.$PY_MINOR 版本过低，需要 3.10+"
+    echo "请升级：brew install python@3.11 或访问 python.org"
+    exit 1
 fi
-python3 --version
 
 echo "[2/3] 创建虚拟环境..."
 if [ ! -d ".venv" ]; then
