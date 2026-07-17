@@ -9,6 +9,12 @@ echo "========================================"
 
 echo "[1/3] 检查 Python..."
 python3 --version || { echo "请先安装 Python 3.10+"; exit 1; }
+PY_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)")
+if [ "$PY_MINOR" -lt 10 ]; then
+    echo "Python 版本过低，需要 3.10+，当前为 3.$PY_MINOR"
+    echo "请升级：brew install python@3.11 或访问 python.org"
+    exit 1
+fi
 
 echo "[2/3] 创建虚拟环境..."
 if [ ! -d ".venv" ]; then

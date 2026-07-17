@@ -16,7 +16,19 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-python --version
+
+rem 检查 Python 版本 >= 3.10
+for /f "tokens=2" %%v in ('python --version 2^>^&1') do set PYVER=%%v
+echo   Python %PYVER%
+for /f "tokens=2 delims=." %%a in ("%PYVER%") do set PYMINOR=%%a
+if %PYMINOR% LSS 10 (
+    echo.
+    echo ERROR: Python %PYVER% is too old. Python 3.10 or newer required.
+    echo Please download Python 3.10+ from https://www.python.org/downloads/
+    echo.
+    pause
+    exit /b 1
+)
 echo.
 
 echo [2/3] Creating virtual environment...
@@ -27,10 +39,15 @@ call .venv\Scripts\activate.bat
 echo.
 
 echo [3/3] Installing Python packages (may take a few minutes)...
+echo   If you are in China, close VPN/proxy and try again if this step fails.
 pip install -r requirements.txt -q
+if %errorlevel% neq 0 (
+    echo.
+    echo   Retrying with Tsinghua mirror...
+    pip install -r requirements.txt -q -i https://pypi.tuna.tsinghua.edu.cn/simple
+)
 echo.
 
-echo.
 echo [Optional] Installing ffmpeg for audio support...
 where ffmpeg >nul 2>&1
 if %errorlevel% equ 0 (
