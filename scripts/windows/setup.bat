@@ -30,13 +30,29 @@ echo [3/3] Installing Python packages (may take a few minutes)...
 pip install -r requirements.txt -q
 echo.
 
+echo.
+echo [Optional] Installing ffmpeg for audio support...
+where ffmpeg >nul 2>&1
+if %errorlevel% equ 0 (
+    echo   ffmpeg already installed
+) else (
+    echo   Downloading ffmpeg...
+    curl -L -o "%TEMP%\ffmpeg-release-essentials.zip" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" 2>nul
+    if exist "%TEMP%\ffmpeg-release-essentials.zip" (
+        mkdir "%USERPROFILE%\ffmpeg" 2>nul
+        tar -xf "%TEMP%\ffmpeg-release-essentials.zip" -C "%USERPROFILE%\ffmpeg" --strip-components=1 2>nul
+        echo   ffmpeg installed to %USERPROFILE%\ffmpeg
+        echo   Adding to PATH for this session...
+        set "PATH=%USERPROFILE%\ffmpeg\bin;%PATH%"
+    ) else (
+        echo   Download failed. Get ffmpeg from https://ffmpeg.org for audio support.
+    )
+)
+echo.
 echo ========================================
 echo   Setup complete!
 echo.
 echo   To start: double-click run.bat
 echo   Then open http://localhost:8002
-echo.
-echo   Optional: install ffmpeg for audio support
-echo   (download from https://ffmpeg.org)
 echo ========================================
 pause
