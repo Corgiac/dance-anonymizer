@@ -9,10 +9,10 @@ echo [1/3] Checking Python...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo.
-    echo ERROR: Python not found.
-    echo Please install Python 3.10+ from https://www.python.org/downloads/
-    echo IMPORTANT: Check "Add Python to PATH" during installation!
-    echo.
+    echo Python not found. Opening download page...
+    start https://www.python.org/downloads/
+    echo Please install Python 3.10+ and check "Add Python to PATH"
+    echo Then run this setup again.
     pause
     exit /b 1
 )
@@ -23,9 +23,9 @@ echo   Python %PYVER%
 for /f "tokens=2 delims=." %%a in ("%PYVER%") do set PYMINOR=%%a
 if %PYMINOR% LSS 10 (
     echo.
-    echo ERROR: Python %PYVER% is too old. Python 3.10 or newer required.
-    echo Please download Python 3.10+ from https://www.python.org/downloads/
-    echo.
+    echo Python %PYVER% is too old (need 3.10+). Opening download page...
+    start https://www.python.org/downloads/
+    echo After upgrading, run this setup again.
     pause
     exit /b 1
 )
