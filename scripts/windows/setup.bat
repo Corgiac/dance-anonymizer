@@ -18,17 +18,18 @@ if %errorlevel% neq 0 (
 )
 
 rem 检查 Python 版本 >= 3.10
-for /f "tokens=2" %%v in ('python --version 2^>^&1') do set PYVER=%%v
-echo   Python %PYVER%
-for /f "tokens=2 delims=." %%a in ("%PYVER%") do set PYMINOR=%%a
-if %PYMINOR% LSS 10 (
+python -c "import sys; exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+if %errorlevel% neq 0 (
+    python --version
     echo.
-    echo Python %PYVER% is too old (need 3.10+). Opening download page...
+    echo Python version is too old. Need 3.10 or newer.
+    echo Opening download page...
     start https://www.python.org/downloads/
     echo After upgrading, run this setup again.
     pause
     exit /b 1
 )
+python --version
 echo.
 
 echo [2/3] Creating virtual environment...
