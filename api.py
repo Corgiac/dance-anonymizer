@@ -1,7 +1,7 @@
 """
 舞蹈视频智能打码/特效渲染系统 — FastAPI v5 (YOLO+SAM2)
 =========================================================
-交互: 上传 → 实时调参预览 → 3s片段 / 全片渲染 (任选其一, 可取消)
+交互: 上传 → 裁剪时长 → 调参预览 → 全片渲染
 启动: uvicorn api:app --host 0.0.0.0 --port 8002
 """
 import os, sys, uuid, json, base64, shutil, cv2, threading, asyncio
