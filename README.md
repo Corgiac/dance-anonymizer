@@ -69,7 +69,7 @@ bash scripts/mac/setup.sh
 - Mac：`lsof -ti:8002 | xargs kill -9` 后重新运行 run.sh
 - Windows：关掉所有命令行窗口后重新双击 run.bat
 
-**生成的视频没声音**：iPhone 拍摄的视频需安装 ffmpeg。Mac 运行 `brew install ffmpeg`，Windows 从 [ffmpeg.org](https://ffmpeg.org) 下载。
+**生成的视频没声音**：ffmpeg 非必须。仅 iPhone 拍摄的视频需要额外安装 ffmpeg 才能合成音频。其他设备（Android、相机、录屏等）无需安装。Mac：`brew install ffmpeg`，Windows：[ffmpeg.org](https://ffmpeg.org)。
 
 ## 模型说明
 
